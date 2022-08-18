@@ -1,0 +1,21 @@
+## Contains settings for CAMELS-spat processing, for transparency and reproducibility
+
+# Overview:
+# [setting] | [value] | [type] # [description]
+#
+# [setting]     : Scripts look for this string to identify the line in this file that contains the information they need.
+# [value]       : Value of the setting used by the scripts. 
+# [type]        : Data type the value is converted to in the script. 
+# [description] : Description for user's benefit
+
+
+# Main settings
+code_path | C:\Git_repos\camels_spat\       | string  # Root path of processing code
+data_path | C:\Globus endpoint\CAMELS_spat\ | string  # Root path of data location
+
+# 0. Python setup
+venv_path | C:\Globus endpoint\CAMELS_spat\ # Path where the Python virtual environment will be created
+venv_name | camels-spat-env                 # Virtual environment name
+reqs_path | 1_Python_setup\                 # Sub-folders in root that contain requirements
+reqs_file | 0_requirements.txt              # Python environment requirements for `pip install -r reqs.txt`
+
