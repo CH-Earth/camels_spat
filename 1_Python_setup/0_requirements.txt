@@ -1,1 +1,2 @@
-cdsapi==0.2.4
+jupyter
+requests
