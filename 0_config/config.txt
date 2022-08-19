@@ -13,9 +13,12 @@
 code_path | C:\Git_repos\camels_spat\       | string  # Root path of processing code
 data_path | C:\Globus endpoint\CAMELS_spat\ | string  # Root path of data location
 
-# 0. Python setup
-venv_path | C:\Globus endpoint\CAMELS_spat\ # Path where the Python virtual environment will be created
-venv_name | camels-spat-env                 # Virtual environment name
-reqs_path | 1_Python_setup\                 # Sub-folders in root that contain requirements
-reqs_file | 0_requirements.txt              # Python environment requirements for `pip install -r reqs.txt`
+# 1. Python setup
+venv_path | C:\Globus endpoint\CAMELS_spat\ | string  # Path where the Python virtual environment will be created
+venv_name | camels-spat-env                 | string  # Virtual environment name
+reqs_path | 1_Python_setup\                 | string  # Sub-folders in root that contain requirements
+reqs_file | 0_requirements.txt              | string  # Python environment requirements for `pip install -r reqs.txt`
 
+# 2. Reference shapefiles
+ref_shps_path | reference_shapes            | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files
+us_camels_url | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip | string  # Download URL for CAMELS-US shapefiles

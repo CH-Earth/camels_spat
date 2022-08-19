@@ -84,6 +84,10 @@ fi
 python -m pip install --upgrade pip # Ensure we have the latest pip version
 python -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" # Install everything else
 
+# Ensure the virtualenv is available as a notebook kernel
+# -------------------------------------------------------
+ipython kernel install --user --name=${venv_name}
+
 # Run test to check if we have everything we need
 # -----------------------------------------------
 # Source: https://stackoverflow.com/a/45474387
