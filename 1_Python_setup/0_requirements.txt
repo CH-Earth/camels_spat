@@ -1,2 +1,4 @@
 jupyter
+openpyxl
+pandas
 requests
