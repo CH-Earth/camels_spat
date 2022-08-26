@@ -8,6 +8,9 @@
 # - Git Bash (part of Git for Windows): https://gitforwindows.org/
 # - Cygwin: https://www.cygwin.com/
 
+# Note: using pip over conda on Windows also required downloading Microsoft Visual Studio C++ Build Tools.
+# VIsual Studio needed to be further updated with <..>
+
 # Define the location of the config file
 # --------------------------------------
 config="../0_config/config.txt"
@@ -52,7 +55,7 @@ esac
 # Check if we're ready for the OS we're on
 # ----------------------------------------
 if [[ "UNKNOWN" == *${machine}* ]]; then
-    echo "OS ${machine}"
+    echo "Unknown OS ${machine}. Aborting."
 	exit 1 # Catch-all error code: https://tldp.org/LDP/abs/html/exitcodes.html
 fi
 
@@ -72,17 +75,41 @@ fi
 # ------------------------------------
 # Source: https://stackoverflow.com/a/3063887
 if [[ -z "$VIRTUAL_ENV" ]]; then
-    echo "Virtual environment not successfully activated."
+    echo "Virtual environment not successfully activated. Aborting."
 	exit 1
 else
     echo "Virtual environment successfully activated in: ${VIRTUAL_ENV}"
 	echo # empty line for clarity on the terminal - ugly, but no idea how to do better
 fi
 
+# Update the basics
+# -----------------
+python -m pip install --upgrade pip
+python -m pip install --upgrade wheel
+python -m pip install --upgrade setuptools
+
+# Make sure we have the required libraries (GDAL)
+# -----------------------------------------------
+echo "Attempting to activate/install libraries using ${machine} command."
+if [[ "Unix" == *${machine}* ]]; then
+    echo "No settings yet defined for Unix systems. Aborting."
+	exit 1 
+elif [[ "Windows" == *${machine}* ]]; then
+    echo "Using pre-built wheels to install GDAL and Fiona for Windows x64."
+	# Install GDAL 3.4.3 with a pre-built wheel for Windows
+	# Wheel source: https://www.lfd.uci.edu/~gohlke/pythonlibs/#gdal
+	python -m pip install GDAL-3.4.3-cp38-cp38-win_amd64.whl # GDAL 3.4.3, built for Python 3.8.x, on Windows 64-bit
+	export GDAL_DATA="${venv_path}/${venv_name}/Lib/site-packages/osgeo/data/gdal"
+	export GDAL_VERSION="3.4.3" # Needed so Fiona knows what GDAL it's working with
+	
+	# Install Fiona with a pre-built wheel for Windows
+	# Wheel source: https://www.lfd.uci.edu/~gohlke/pythonlibs/#fiona
+	python -m pip install Fiona-1.8.21-cp38-cp38-win_amd64.whl
+fi
+
 # Install the required packages
 # -----------------------------
-python -m pip install --upgrade pip # Ensure we have the latest pip version
-python -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" # Install everything else
+python -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" 
 
 # Ensure the virtualenv is available as a notebook kernel
 # -------------------------------------------------------

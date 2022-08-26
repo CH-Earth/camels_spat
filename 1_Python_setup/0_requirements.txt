@@ -1,4 +1,15 @@
+cligj
+fiona
+gdal
+geopandas
 jupyter
+matplotlib
+munch
+numpy
 openpyxl
+packaging
 pandas
 requests
+rtree
+shapely
+six
