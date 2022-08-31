@@ -20,11 +20,16 @@ reqs_path | 1_Python_setup\                 | string  # Sub-folders in root that
 reqs_file | 0_requirements.txt              | string  # Python environment requirements for `pip install -r reqs.txt`
 
 # 2. Reference shapefiles
-ref_shps_path         | reference_shapes                                                                                            | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files
-us_camels_url         | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                            | string  # Download URL for CAMELS-US shapefiles
-can_rhbn_meta_url     | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/RHBN/RHBN_Metadata.xlsx                             | string  # FTP URL for Reference Hydrometric Basin Network (RHBN) data downloads, specifically the metadata file
-can_wsc_2016_shps_url | https://donnees.ec.gc.ca/data/water/products/national-hydrometric-network-basin-polygons/WSC_Basins.gdb.zip | string  # Download URL for WSC 2016 reference shapefiles
-can_wsc_2022_shps_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/*.zip               | string  # Download URL for WSC 2022 reference shapefiles; * should be replaced by 01, 02, .., 11
-can_wsc_2022_rdme_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Read_me.pdf         | string  # Download URL for WSC 2022 pre-release readme; stored here for legacy
+ref_shps_path         | reference_shapes                                                                                                          | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files
+us_camels_url         | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                                          | string  # Download URL for CAMELS-US shapefiles
+can_rhbn_meta_url     | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/RHBN/RHBN_Metadata.xlsx                                           | string  # FTP URL for Reference Hydrometric Basin Network (RHBN) data downloads, specifically the metadata file
+can_wsc_2016_shps_url | https://donnees.ec.gc.ca/data/water/products/national-hydrometric-network-basin-polygons/WSC_Basins.gdb.zip               | string  # Download URL for WSC 2016 reference shapefiles
+can_wsc_2022_shps_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/*.zip                             | string  # Download URL for WSC 2022 reference shapefiles; * should be replaced by 01, 02, .., 11
+can_wsc_2022_meta_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Prerelease_included_stations.txt  | string  # Download URL for WSC 2022 station list and meta data file
+can_wsc_2022_rdme_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Read_me.pdf                       | string  # Download URL for WSC 2022 pre-release readme
 
 # 3. Basin discretization from MERIT Hydro 
+
+
+
+
