@@ -4,11 +4,11 @@ Repository that contains processing code used to generate the CAMELS-spat (Catch
 ## Repository description
 
 This repository contains the following sub-folders:
-1. **0_config** - contains a configuration file with all high-level decisions. Prevents needing to hard-code paths in the remainder of the code and this in turns leads to more efficient reproducibility.
-2. **1_Python_setup** - contains:
+- **0_config** - contains a configuration file with all high-level decisions. Prevents needing to hard-code paths in the remainder of the code and this in turns leads to more efficient reproducibility.
+- **1_Python_setup** - contains:
 	- **0_tools**: folder with shared functions.
 	- **1_make_venv**: requirements of and code to configure a Python virtual environment.
-3. **2_reference_shapefiles** - contains code to obtain and process reference shapefiles for the CAMELS-spat basins, obtained from the CAMELS-US data set and Water Survey of Canada data sets.
+- **2_reference_shapefiles** - contains code to obtain and process reference shapefiles for the CAMELS-spat basins, obtained from the CAMELS-US data set and Water Survey of Canada data sets.
 
 	
 ## Reproducibility
