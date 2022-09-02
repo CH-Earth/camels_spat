@@ -2,6 +2,7 @@ cligj
 fiona
 gdal
 geopandas
+hs_restclient
 jupyter
 matplotlib
 munch
@@ -9,6 +10,7 @@ numpy
 openpyxl
 packaging
 pandas
+py7zr
 requests
 rtree
 shapely

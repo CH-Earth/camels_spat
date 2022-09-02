@@ -1,4 +1,6 @@
-## Contains settings for CAMELS-spat processing, for transparency and reproducibility
+## Contains settings for CAMELS-spat processing
+# Tracking certain settings (such as local file locations) here helps porting the code to other machines.
+# Tracking data sources (URLs) here helps transparency. 
 
 # Overview:
 # [setting] | [value] | [type] # [description]
@@ -28,7 +30,13 @@ can_wsc_2022_shps_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/
 can_wsc_2022_meta_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Prerelease_included_stations.txt  | string  # Download URL for WSC 2022 station list and meta data file
 can_wsc_2022_rdme_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Read_me.pdf                       | string  # Download URL for WSC 2022 pre-release readme
 
-# 3. Basin discretization from MERIT Hydro 
+# 3. MERIT Hydro data
+merit_path          | merit_hydro_files                                                                | string  # Main folder for MERIT Hydro data and shapefiles. Sub-folders hard-coded in processing files
+merit_download_area | -150,-60,0,60                                                                    | string  # Download coordinates for MERIT Hydro grids as ( lon_min, lon_max, lat_min, lat_max )
+merit_subset_area   | -145,-52,25,71                                                                   | string  # Subsetting coordinates that should just cover the area of interest ( lon_min, lon_max, lat_min, lat_max ). Checked in QGIS with reference shapes.
+merit_flow_acc_url  | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/upa_{}{}.tar | string  # Download URL for Merit Hydro flow accumulation map
+merit_flow_dir_url  | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/dir_{}{}.tar | string  # Download URL for Merit Hydro flow direction map
+merit_shps_hs_id    | 46d980a71d2c4365aa290dc1bfdac823                                                 | string  # HydroShare resource ID that contains MERIT Hydro-derived shapefiles
 
 
 
