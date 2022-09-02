@@ -9,9 +9,9 @@ sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
 # Get the location of the requirements file from the config file
-code_path,_ = cs.read_from_config('../0_config/config.txt','code_path')
-reqs_path,_ = cs.read_from_config('../0_config/config.txt','reqs_path')
-reqs_file,_ = cs.read_from_config('../0_config/config.txt','reqs_file')
+code_path = cs.read_from_config('../0_config/config.txt','code_path')
+reqs_path = cs.read_from_config('../0_config/config.txt','reqs_path')
+reqs_file = cs.read_from_config('../0_config/config.txt','reqs_file')
 _REQUIREMENTS_PATH = Path(os.path.join(code_path,reqs_path,reqs_file))
 
 class TestRequirements(unittest.TestCase):
