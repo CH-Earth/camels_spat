@@ -23,8 +23,11 @@ reqs_file | 0_requirements.txt              | string  # Python environment requi
 
 # 2. Reference shapefiles
 ref_shps_path         | reference_shapes                                                                                                          | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files
-us_camels_url         | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                                          | string  # Download URL for CAMELS-US shapefiles
+us_camels_meta_url    | https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.xlsx                                                     | string  # Download URL for CAMELS-US metadata information
+us_camels_topo_url    | https://gdex.ucar.edu/dataset/camels/file/camels_topo.txt                                                                 | string  # Download URL for CAMELS-US topography information
+us_camels_shps_url    | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                                          | string  # Download URL for CAMELS-US shapefiles
 can_rhbn_meta_url     | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/RHBN/RHBN_Metadata.xlsx                                           | string  # FTP URL for Reference Hydrometric Basin Network (RHBN) data downloads, specifically the metadata file
+can_hydat_db_url      | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/Hydat_sqlite3_20220721.zip                                        | string  # FTP URL for HYDAT database download
 can_wsc_2016_shps_url | https://donnees.ec.gc.ca/data/water/products/national-hydrometric-network-basin-polygons/WSC_Basins.gdb.zip               | string  # Download URL for WSC 2016 reference shapefiles
 can_wsc_2022_shps_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/*.zip                             | string  # Download URL for WSC 2022 reference shapefiles; * should be replaced by 01, 02, .., 11
 can_wsc_2022_meta_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Prerelease_included_stations.txt  | string  # Download URL for WSC 2022 station list and meta data file

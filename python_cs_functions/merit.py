@@ -96,8 +96,10 @@ def download_merit_hydro_grid(url,usr,pwd,dest_folder,
        using [usr] and [pwd] as login credentials.'''
     
     import os
-    import shutil
-    import requests
+    import sys
+    from pathlib import Path
+    sys.path.append(str(Path().absolute().parent))
+    import python_cs_functions as cs
     
     # Extract the filename from the URL
     file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters
@@ -114,32 +116,10 @@ def download_merit_hydro_grid(url,usr,pwd,dest_folder,
         print('WARNING: download_merit_hydro_grid: MERIT Hydro data does not contain data for {}. Aborting download.'.format(file_name))
         return
         
-    # Make sure the connection is re-tried if it fails
-    retries_cur = 1
-    while retries_cur <= retries_max:
-        try: 
-
-            # Send a HTTP request to the server and save the HTTP response in a response object called resp
-            # 'stream = True' ensures that only response headers are downloaded initially (and not all file contents too, which are 2GB+)
-            with requests.get(url.strip(), auth=(usr, pwd), stream=True) as response:
-
-                # Decode the response
-                response.raw.decode_content = True
-                content = response.raw
-
-                # Write to file
-                with open(dest_folder / file_name, 'wb') as data:
-                    shutil.copyfileobj(content, data)
-
-                # print a completion message
-                print('Successfully downloaded ' + url)
-
-        except:
-            print('Error downloading ' + url + ' on try ' + str(retries_cur))
-            retries_cur += 1
-            continue
-        else:
-            break
+    # Make the keywords for request.get() and download the file
+    kwargs={'auth': (usr,pwd)}
+    cs.download_url_into_folder(url,dest_folder,requests_kwargs=kwargs)
+    
     return
 
 
