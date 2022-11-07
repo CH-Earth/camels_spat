@@ -69,4 +69,30 @@ def process_wsc2016_ref_shape(ref_shps,mask):
     src = 'WSC 2016 data set'
     
     return out,src
+
+def process_wsc2022_location_info(station_id, ref_shp):
     
+    '''Processes the WSC2022 reference shapes to extract station and outlet locations for CAMELS-spat metadata'''
+    
+    # Inputs:
+    # ref_shp: GeoPandas dataframe with 1008 WSC2022 RHBN locations
+    #          We don't need separate functions to extract station and outlet info, because they have the same columns
+    # station_id: 
+    #
+    # Output
+    # lat: latitude coordinate of the Geometry in EPSG:4326
+    # lon: longitude coordinate of the Geometry in EPSG:4326
+    
+    # Select the data
+    mask = ref_shp['StationNum'] == station_id
+    out = ref_shp[mask].copy() # Make a copy, not a view
+    
+    # Check the geometry
+    if out.crs != 'EPSG:4326':
+        out = out.to_crs('EPSG:4326')
+    
+    # Get the coordinates
+    lon = ref_shp[mask].geometry.x
+    lat = ref_shp[mask].geometry.y
+    
+    return lat,lon    
