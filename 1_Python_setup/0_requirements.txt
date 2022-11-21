@@ -11,6 +11,7 @@ openpyxl
 packaging
 pandas
 py7zr
+pysheds
 requests
 rtree
 shapely
