@@ -157,6 +157,7 @@ def prepare_delineation_outputs(df,i,data_path):
     # Get identifiers
     country = df.iloc[i].Country
     basin_id = df.iloc[i].Station_id
+    full_id = country + '_' + basin_id
     
     # Construct the paths
     main_folder = Path(data_path) / 'basin_data' / (country + '_' + basin_id) / 'shapefiles'
@@ -169,12 +170,12 @@ def prepare_delineation_outputs(df,i,data_path):
     dist_folder.mkdir(parents=True, exist_ok=True)
     
     # Make the output file paths
-    lump_file = lump_folder / ('lumped_' + basin_id +'.shp')
-    dist_file = dist_folder / ('distributed_' + basin_id +'_{}.shp')
-    refr_file = refr_folder / ('reference_' + basin_id +'.shp')
-    plot_file = main_folder / ('delineation_results_' + basin_id + '.png')
+    lump_file = lump_folder / (full_id + '_lumped.shp')
+    dist_file = dist_folder / (full_id + '_distributed_{}.shp')
+    refr_file = refr_folder / (full_id + '_reference.shp')
+    plot_file = main_folder / (full_id + '_delineation_results.png')
     
-    return lump_file, dist_file, refr_file, plot_file
+    return full_id, lump_file, dist_file, refr_file, plot_file
 
 def delineate_catchment_with_pysheds(grid, lon, lat, fdir, shapefile_path,
                                      snap='center'):
@@ -388,3 +389,211 @@ def select_merit_basin_ids(basins, rivers, column, lat, lon):
         print('ERROR: select_merit_basin_ids: could not identify basin IDs')
     
     return mask
+
+def prepare_plotting_legend(handles,labels,label,**kwargs):
+    
+    '''Adds a new legend item to handles and labels list to use with GeoPandas PAtchCollection plots.
+    
+    Inputs:
+    - handles: list of existing handle objects (can be empty)
+    - labels: list of existing legend labels (can be empty)
+    - label: name of legend item to be added
+    - **kwargs: keyword arguments for matplotlib.lines.Line2D. Useful here:
+        - Marker shape and size:
+            - 'marker'
+            - 'markersize'
+        - For color, use either:
+            - 'color'
+            - 'markerfacecolor' and 'markeredgecolor'
+    
+    Returns:
+    - handles: updated list with handle objects
+    - labels: updated list with labels
+    '''
+    
+    from matplotlib.lines import Line2D
+    
+    # Create a legend item with the specified kwargs
+    handles.append(Line2D([0],[0], linestyle="none", **kwargs))
+    
+    # Update the label
+    labels.append(label)
+        
+    return handles, labels
+
+def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, save_path):
+    
+    '''Plots lumped and distributed discretization outcomes and reference shape (if available).
+    
+    Inputs:
+    - basin_id: string to use as plot title, e.g. 'CAN_01AD002'
+    - lump_shp: GeoDataframe with lumped basin outline
+    - basin_shp: GeoDataframe with distributed basin outlines
+    - river_shp: GeoDataframe with river network
+    - ref_file: Path() to reference file. Not used if the specified file does not exist
+    - lat: latitude of delineation outlet
+    - lon: longitude of delineation outlet
+    - save_path: Path() to location where figure should be saved
+    '''
+    
+    import os.path
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
+    
+    # Handle reference shape
+    have_ref = False
+    if os.path.isfile(ref_file):
+        have_ref = True
+        ref_shp = gpd.read_file(ref_file)
+    
+    # Settings
+    ms = 5 # marker size in legends
+    
+    # Colors suitable for all (?) kinds of color blindness
+    # Source: https://colorbrewer2.org/#type=diverging&scheme=RdYlBu&n=5
+    criv = [215/256, 25/256, 28/256] # rivers, red // This works best because it's the highest contrast with yellow & black
+    temp = [253/256,174/256, 97/256] # unused, orange
+    cfac = [255/256,255/256,191/256] # lumped & distributed shape facecolor, yellow 
+    cbac = [171/256,217/256,233/256] # plot background, light blue
+    cref = [ 44/120,123/256,182/256] # reference shape, dark blue 
+    cedg = [  0/256,  0/256,  0/256] # lumped & distributed shape edgecolor, black
+    
+    # Create the plot
+    fig, axs = plt.subplots(1,2,figsize=(10,5))
+    
+    # Subplot 1: lumped shape
+    # ---------------------------------------------------------
+    ax = axs[0]
+    ax.set_facecolor(cbac)
+    
+    # Shapes 
+    lump_shp.plot(ax=ax, facecolor=cfac, edgecolor=cedg)
+    if have_ref: ref_shp.boundary.plot(ax=ax, color=cref)
+    ax.plot(lon,lat, marker='o', markeredgecolor='k', markerfacecolor='w', markersize=10)
+    
+    # Legend
+    lines = []; labels = []
+    lines,labels = prepare_plotting_legend(lines, labels, 'Lumped shape', marker='s', 
+                                                                          markersize=ms, 
+                                                                          markerfacecolor=cfac,
+                                                                          markeredgecolor=cedg)
+    if have_ref: lines,labels = prepare_plotting_legend(lines, labels, 'Reference shape', marker='_', 
+                                                                                          markersize=ms,
+                                                                                          markeredgewidth=2,
+                                                                                          color=cref)
+    lines,labels = prepare_plotting_legend(lines, labels, 'Outlet', marker='o', 
+                                                                    markersize=ms, 
+                                                                    markeredgecolor='k',
+                                                                    markerfacecolor='w')
+    ax.legend(lines, labels, loc='upper left')
+    
+    # Chart junk
+    ax.set_title(basin_id)
+    ax.set_xlabel('Longitude [degrees]')
+    ax.set_ylabel('Latitude [degrees]')
+    
+    # Subplot 2: Distributed shape
+    # ---------------------------------------------------------
+    ax = axs[1]
+    ax.set_facecolor(cbac)
+    
+    # Shapes
+    basin_shp.plot(ax=ax, facecolor=cfac, edgecolor=cedg) 
+    river_shp.plot(ax=ax, color=criv)
+    if have_ref: ref_shp.boundary.plot(ax=ax, color=cref)
+    ax.plot(lon,lat, marker='o', markeredgecolor='k', markerfacecolor='w', markersize=10)
+    
+    # Legend
+    lines = []; labels = []
+    lines,labels = prepare_plotting_legend(lines, labels, 'Distributed shape', marker='s', 
+                                                                               markersize=ms, 
+                                                                               markerfacecolor=cfac,
+                                                                               markeredgecolor=cedg)
+    lines,labels = prepare_plotting_legend(lines, labels, 'River network', marker='_', 
+                                                                           markersize=ms,
+                                                                           markeredgewidth=2,
+                                                                           color=criv)    
+    if have_ref: lines,labels = prepare_plotting_legend(lines, labels, 'Reference shape', marker='_', 
+                                                                                          markersize=ms,
+                                                                                          markeredgewidth=2,
+                                                                                          color=cref)
+    lines,labels = prepare_plotting_legend(lines, labels, 'Outlet', marker='o', 
+                                                                    markersize=ms, 
+                                                                    markeredgecolor='k',
+                                                                    markerfacecolor='w')
+    ax.legend(lines, labels, loc='upper left')
+    
+    # Chart junk
+    ax.set_xlabel('Longitude [degrees]')
+    
+    # Save the plot
+    # ---------------------------------------------------------
+    plt.savefig(save_path, dpi=300)
+    
+    return # nothing
+
+def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
+    
+    '''Calculates areal overlap between delineated basin and reference shape, if a reference shape exists.
+    
+    Input:
+    - basin: GeoDataframe with first shapefile
+    - ref_file: GeoDataframe with reference shapefile
+    
+    Optional input:
+    - crs: Coordinate Reference System to perform area comparison in
+    
+    Return:
+    - overlap: fractional overlap between both shapes
+    '''
+    
+    import os.path
+    
+    overlap = 'n/a'
+    if os.path.isfile(ref_file):
+        ref_shp = gpd.read_file(ref_file)
+        overlap = (ref_shp.intersection(lump_basin).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+    
+    return overlap
+
+def get_reference_areas(df,i):
+    
+    '''Reads reference areas from metadata file
+    
+    Input:
+    - df: dataframe with CAMELS-spat metadata file
+    - i: row index of basin under investigations
+    
+    Return:
+    - out: dictionary with {Reference area source: reference area [km^2]}
+    '''
+    
+    out = {df['Ref_area_1_src'].iloc[i]  : df['Ref_area_1_km2'].iloc[i],
+           df['Ref_area_2_src'].iloc[i]  : df['Ref_area_2_km2'].iloc[i],
+           df['Ref_shape_source'].iloc[i]: df['Ref_shape_area_km2'].iloc[i]}
+    
+    return out
+
+def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
+    
+    '''Calculates areal overlap between delineated basin and reference shape, if a reference shape exists.
+    
+    Input:
+    - basin: GeoDataframe with first shapefile
+    - ref_file: GeoDataframe with reference shapefile
+    
+    Optional input:
+    - crs: Coordinate Reference System to perform area comparison in
+    
+    Return:
+    - overlap: fractional overlap between both shapes
+    '''
+    
+    import os.path
+    
+    overlap = 'n/a'
+    if os.path.isfile(ref_file):
+        ref_shp = gpd.read_file(ref_file)
+        overlap = (ref_shp.intersection(lump_basin).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+    
+    return overlap
