@@ -421,7 +421,7 @@ def prepare_plotting_legend(handles,labels,label,**kwargs):
         
     return handles, labels
 
-def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, save_path):
+def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, statistics_text, save_path):
     
     '''Plots lumped and distributed discretization outcomes and reference shape (if available).
     
@@ -459,7 +459,7 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     cedg = [  0/256,  0/256,  0/256] # lumped & distributed shape edgecolor, black
     
     # Create the plot
-    fig, axs = plt.subplots(1,2,figsize=(10,5))
+    fig, axs = plt.subplots(1,3,figsize=(15,7), width_ratios=[2,2,1])
     
     # Subplot 1: lumped shape
     # ---------------------------------------------------------
@@ -524,10 +524,18 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     ax.legend(lines, labels, loc='upper left')
     
     # Chart junk
+    ax.set_title(basin_id)
     ax.set_xlabel('Longitude [degrees]')
+    
+    # Subplot 3: text
+    # ---------------------------------------------------------
+    ax = axs[2]
+    add_statistics_to_axis(ax,basin_id,statistics_text)
+    ax.axis('off')
     
     # Save the plot
     # ---------------------------------------------------------
+    plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     
     return # nothing
@@ -548,11 +556,13 @@ def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
     '''
     
     import os.path
+    import geopandas as gpd
     
     overlap = 'n/a'
     if os.path.isfile(ref_file):
         ref_shp = gpd.read_file(ref_file)
-        overlap = (ref_shp.intersection(lump_basin).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+        basin = basin.dissolve() # Create a single polygon for intersection 
+        overlap = (ref_shp.intersection(basin, align=False).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
     
     return overlap
 
@@ -568,32 +578,49 @@ def get_reference_areas(df,i):
     - out: dictionary with {Reference area source: reference area [km^2]}
     '''
     
-    out = {df['Ref_area_1_src'].iloc[i]  : df['Ref_area_1_km2'].iloc[i],
-           df['Ref_area_2_src'].iloc[i]  : df['Ref_area_2_km2'].iloc[i],
-           df['Ref_shape_source'].iloc[i]: df['Ref_shape_area_km2'].iloc[i]}
+    out = [[df['Ref_area_1_src'].iloc[i],   df['Ref_area_1_km2'].iloc[i]],
+           [df['Ref_area_2_src'].iloc[i],   df['Ref_area_2_km2'].iloc[i]],
+           [df['Ref_shape_source'].iloc[i], df['Ref_shape_area_km2'].iloc[i]]]
     
     return out
 
-def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
+def prepare_plotting_stats(ref_areas,area_lump,area_dist,overlap_lump,overlap_dist):
     
-    '''Calculates areal overlap between delineated basin and reference shape, if a reference shape exists.
+    '''Creates a list with statistics about the delineationthat is input to the main plotting function'''
     
-    Input:
-    - basin: GeoDataframe with first shapefile
-    - ref_file: GeoDataframe with reference shapefile
+    stats = ref_areas.copy()
+    stats.append(['Lumped basin', area_lump])
+    stats.append(['Distributed basin', area_dist])
+    stats.append(['Lumped basin', overlap_lump])
+    stats.append(['Distributed basin', overlap_dist])
+    stats
     
-    Optional input:
-    - crs: Coordinate Reference System to perform area comparison in
+    return stats
+
+def add_statistics_to_axis(ax,basin_id,stats):
     
-    Return:
-    - overlap: fractional overlap between both shapes
-    '''
+    # Make a string
+    txt = ('{}\n'
+           'Area comparison {:>31}\n'
+           'Ref 1: {:<32}: {:.2f}\n'
+           'Ref 2: {:<32}: {:.2f}\n'
+           'Ref 3: {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n\n'
+           'Fractional overlap with reference shape {:>4}\n'
+           '       {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n'
+           ''.format(basin_id,'[km^2]',
+                     stats[0][0],stats[0][1],
+                     stats[1][0],stats[1][1],
+                     stats[2][0],stats[2][1],
+                     stats[3][0],stats[3][1],
+                     stats[4][0],stats[4][1],
+                     '[-]',
+                     stats[5][0],stats[5][1],
+                     stats[6][0],stats[6][1]))
     
-    import os.path
+    # Write data onto axis                
+    ax.text(-0.1,0.85,txt, va='top', transform=ax.transAxes, family='monospace', fontsize=10)
     
-    overlap = 'n/a'
-    if os.path.isfile(ref_file):
-        ref_shp = gpd.read_file(ref_file)
-        overlap = (ref_shp.intersection(lump_basin).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
-    
-    return overlap
+    return
