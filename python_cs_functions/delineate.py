@@ -1,5 +1,38 @@
 '''Contains functions to do basin delineation.'''
 
+# File paths and names
+# ------------------------------------------------------------------------------------------------------------------------
+def prepare_delineation_outputs(df,i,data_path):
+    
+    '''Prepares output folders and file paths for lumped and distributed dilneation outcomes'''
+    
+    from pathlib import Path
+    
+    # Get identifiers
+    country = df.iloc[i].Country
+    basin_id = df.iloc[i].Station_id
+    full_id = country + '_' + basin_id
+    
+    # Construct the paths
+    main_folder = Path(data_path) / 'basin_data' / (country + '_' + basin_id) / 'shapefiles'
+    lump_folder = main_folder / 'lumped'
+    dist_folder = main_folder / 'distributed'
+    refr_folder = main_folder / 'reference'
+    
+    # Make the paths
+    lump_folder.mkdir(parents=True, exist_ok=True)
+    dist_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Make the output file paths
+    lump_file = lump_folder / (full_id + '_lumped.shp')
+    dist_file = dist_folder / (full_id + '_distributed_{}.shp')
+    refr_file = refr_folder / (full_id + '_reference.shp')
+    plot_file = main_folder / (full_id + '_delineation_results.png')
+    
+    return full_id, lump_file, dist_file, refr_file, plot_file
+
+# Station data
+# ------------------------------------------------------------------------------------------------------------------------
 def read_delineation_coords(df,i):
     
     '''Reads the station or ourlet location from CAMELS-spat metadata file.'''
@@ -12,6 +45,8 @@ def read_delineation_coords(df,i):
     
     return lat,lon
 
+# Delineation prep
+# ------------------------------------------------------------------------------------------------------------------------
 def determine_pysheds_data_loading_window(lat,lon,src_file,
                                           lat_extent=10, lon_extent=15): 
     
@@ -126,57 +161,37 @@ def load_tifs_with_pysheds(acc_file,fdir_file):
     
     return grid,acc,fdir
 
-def get_merit_hydro_accumulated_upstream_area(grid,acc,lon,lat):
+def fix_geom(in_feature):
     
-    '''Reads the accumulated upstream area for a given (lon,lat) location.
-    
-    Inputs:
-    - grid: Pysheds grid object with grid definition
-    - acc:  Pysheds accumulated area raster on 'grid'
-    - lon:  longitude of location of interest
-    - lat:  latitude of location of interest
-        
-    Returns:
-    - accumulated upstream area at (lon,lat) in [km^2]
+    '''Fixes polygon geometries if invalid
+       
+       Source: https://stackoverflow.com/a/71231092
     '''
     
-    # Find the grid closest to the pour point
-    col,row = grid.nearest_cell(lon,lat, snap='center')
+    from shapely.validation import make_valid
     
-    # Extract values in the search range
-    area = acc[row,col]    
+    # avoid changing original geodf
+    in_feature = in_feature.copy(deep=True)    
+        
+    # drop any missing geometries
+    in_feature = in_feature[~(in_feature.is_empty)]
     
-    return area
+    # Repair broken geometries
+    for index, row in in_feature.iterrows(): # Looping over all polygons
+        if row['geometry'].is_valid:
+            next
+        else:
+            fix = make_valid(row['geometry'])
 
-def prepare_delineation_outputs(df,i,data_path):
-    
-    '''Prepares output folders and file paths for lumped and distributed dilneation outcomes'''
-    
-    from pathlib import Path
-    
-    # Get identifiers
-    country = df.iloc[i].Country
-    basin_id = df.iloc[i].Station_id
-    full_id = country + '_' + basin_id
-    
-    # Construct the paths
-    main_folder = Path(data_path) / 'basin_data' / (country + '_' + basin_id) / 'shapefiles'
-    lump_folder = main_folder / 'lumped'
-    dist_folder = main_folder / 'distributed'
-    refr_folder = main_folder / 'reference'
-    
-    # Make the paths
-    lump_folder.mkdir(parents=True, exist_ok=True)
-    dist_folder.mkdir(parents=True, exist_ok=True)
-    
-    # Make the output file paths
-    lump_file = lump_folder / (full_id + '_lumped.shp')
-    dist_file = dist_folder / (full_id + '_distributed_{}.shp')
-    refr_file = refr_folder / (full_id + '_reference.shp')
-    plot_file = main_folder / (full_id + '_delineation_results.png')
-    
-    return full_id, lump_file, dist_file, refr_file, plot_file
+            try:
+                in_feature.loc[[index],'geometry'] =  fix # issue with Poly > Multipolygon
+            except ValueError:
+                in_feature.loc[[index],'geometry'] =  in_feature.loc[[index], 'geometry'].buffer(0)
+                
+    return in_feature
 
+# Lumped basin delineation
+# ------------------------------------------------------------------------------------------------------------------------
 def delineate_catchment_with_pysheds(grid, lon, lat, fdir, shapefile_path,
                                      snap='center'):
     
@@ -208,7 +223,7 @@ def delineate_catchment_with_pysheds(grid, lon, lat, fdir, shapefile_path,
     
     # Write the shape
     basin_shp = write_pysheds_grid_to_shp(grid, shapefile_path)
-        
+            
     return basin_shp
 
 def write_pysheds_grid_to_shp(grid,file_path,
@@ -246,13 +261,13 @@ def write_pysheds_grid_to_shp(grid,file_path,
     with fiona.open(str(file_path), 'w',
                     driver=driver,
                     #crs=grid.crs.srs,
-                    crs=from_epsg(4326), # This is what the Merit Hydro .tifs in the grid are in, but somehow this doesn't work
+                    crs=from_epsg(4326), # This is what the Merit Hydro .tifs in the grid are in, but somehow this doesn't work automatically
                     schema=schema) as c:
         i = 0
         for shape, value in shapes:
             rec = {}
             rec['geometry'] = shape
-            rec['properties'] = {'LABEL' : str(value)}
+            rec['properties'] = {'LABEL' : str(value)} # This also results in an empty column called 'LABEL' that we don't need, but without this line the shapefile writer trips up. Drop the column later
             rec['id'] = str(i)
             c.write(rec)
             i += 1
@@ -260,38 +275,43 @@ def write_pysheds_grid_to_shp(grid,file_path,
     # Open the shapefile, fix geometry, save and return
     shp = gpd.read_file(file_path)
     shp = fix_geom(shp)
+    shp = shp.drop('LABEL', axis=1)
     shp.to_file(str(file_path))
     
     return shp
 
-def fix_geom(in_feature):
+def add_area_to_shape(shp, column='area', crs='ESRI:102008'):
     
-    '''Fixes polygon geometries if invalid
-       
-       Source: https://stackoverflow.com/a/71231092
+    '''Computes the area of shp using crs and stores in column'''
+    
+    areas = shp.to_crs(crs).area / 10**6 # [m^2] > [km^2]
+    shp[column] = areas
+    
+    return shp
+
+# Distributed basin delineation
+# ------------------------------------------------------------------------------------------------------------------------
+def get_merit_hydro_accumulated_upstream_area(grid,acc,lon,lat):
+    
+    '''Reads the accumulated upstream area for a given (lon,lat) location.
+    
+    Inputs:
+    - grid: Pysheds grid object with grid definition
+    - acc:  Pysheds accumulated area raster on 'grid'
+    - lon:  longitude of location of interest
+    - lat:  latitude of location of interest
+        
+    Returns:
+    - accumulated upstream area at (lon,lat) in [km^2]
     '''
     
-    from shapely.validation import make_valid
+    # Find the grid closest to the pour point
+    col,row = grid.nearest_cell(lon,lat, snap='center')
     
-    # avoid changing original geodf
-    in_feature = in_feature.copy(deep=True)    
-        
-    # drop any missing geometries
-    in_feature = in_feature[~(in_feature.is_empty)]
+    # Extract values in the search range
+    area = acc[row,col]    
     
-    # Repair broken geometries
-    for index, row in in_feature.iterrows(): # Looping over all polygons
-        if row['geometry'].is_valid:
-            next
-        else:
-            fix = make_valid(row['geometry'])
-
-            try:
-                in_feature.loc[[index],'geometry'] =  fix # issue with Poly > Multipolygon
-            except ValueError:
-                in_feature.loc[[index],'geometry'] =  in_feature.loc[[index], 'geometry'].buffer(0)
-                
-    return in_feature
+    return area
 
 def subset_merit_hydro_to_basin(basins, rivers, mask, shapefile_path, lat, lon,
                                 id_column='COMID', area_column='unitarea', crs='ESRI:102008'):
@@ -390,6 +410,67 @@ def select_merit_basin_ids(basins, rivers, column, lat, lon):
     
     return mask
 
+# Stats 
+# ------------------------------------------------------------------------------------------------------------------------
+def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
+    
+    '''Calculates areal overlap between delineated basin and reference shape, if a reference shape exists.
+    
+    Input:
+    - basin: GeoDataframe with first shapefile
+    - ref_file: GeoDataframe with reference shapefile
+    
+    Optional input:
+    - crs: Coordinate Reference System to perform area comparison in
+    
+    Return:
+    - overlap: fractional overlap between both shapes
+    '''
+    
+    import os.path
+    import geopandas as gpd
+    
+    overlap = 'n/a'
+    if os.path.isfile(ref_file):
+        ref_shp = gpd.read_file(ref_file)
+        basin = basin.dissolve() # Create a single polygon for intersection 
+        overlap = (ref_shp.intersection(basin, align=False).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+    
+    return overlap
+
+def get_reference_areas(df,i):
+    
+    '''Reads reference areas from metadata file
+    
+    Input:
+    - df: dataframe with CAMELS-spat metadata file
+    - i: row index of basin under investigations
+    
+    Return:
+    - out: dictionary with {Reference area source: reference area [km^2]}
+    '''
+    
+    out = [[df['Ref_area_1_src'].iloc[i],   df['Ref_area_1_km2'].iloc[i]],
+           [df['Ref_area_2_src'].iloc[i],   df['Ref_area_2_km2'].iloc[i]],
+           [df['Ref_shape_source'].iloc[i], df['Ref_shape_area_km2'].iloc[i]]]
+    
+    return out
+
+# Plotting
+# ------------------------------------------------------------------------------------------------------------------------
+def prepare_plotting_stats(ref_areas,area_lump,area_dist,overlap_lump,overlap_dist):
+    
+    '''Creates a list with statistics about the delineationthat is input to the main plotting function'''
+    
+    stats = ref_areas.copy()
+    stats.append(['Lumped basin', area_lump])
+    stats.append(['Distributed basin', area_dist])
+    stats.append(['Lumped basin', overlap_lump])
+    stats.append(['Distributed basin', overlap_dist])
+    stats
+    
+    return stats
+
 def prepare_plotting_legend(handles,labels,label,**kwargs):
     
     '''Adds a new legend item to handles and labels list to use with GeoPandas PAtchCollection plots.
@@ -420,6 +501,34 @@ def prepare_plotting_legend(handles,labels,label,**kwargs):
     labels.append(label)
         
     return handles, labels
+
+def add_statistics_to_axis(ax,basin_id,stats):
+    
+    # Make a string
+    txt = ('{}\n'
+           'Area comparison {:>31}\n'
+           'Ref 1: {:<32}: {:.2f}\n'
+           'Ref 2: {:<32}: {:.2f}\n'
+           'Ref 3: {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n\n'
+           'Fractional overlap with reference shape {:>4}\n'
+           '       {:<32}: {:.2f}\n'
+           '       {:<32}: {:.2f}\n'
+           ''.format(basin_id,'[km^2]',
+                     stats[0][0],stats[0][1],
+                     stats[1][0],stats[1][1],
+                     stats[2][0],stats[2][1],
+                     stats[3][0],stats[3][1],
+                     stats[4][0],stats[4][1],
+                     '[-]',
+                     stats[5][0],stats[5][1],
+                     stats[6][0],stats[6][1]))
+    
+    # Write data onto axis                
+    ax.text(-0.1,0.85,txt, va='top', transform=ax.transAxes, family='monospace', fontsize=10)
+    
+    return
 
 def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, statistics_text, save_path):
     
@@ -539,88 +648,3 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     plt.savefig(save_path, dpi=300)
     
     return # nothing
-
-def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
-    
-    '''Calculates areal overlap between delineated basin and reference shape, if a reference shape exists.
-    
-    Input:
-    - basin: GeoDataframe with first shapefile
-    - ref_file: GeoDataframe with reference shapefile
-    
-    Optional input:
-    - crs: Coordinate Reference System to perform area comparison in
-    
-    Return:
-    - overlap: fractional overlap between both shapes
-    '''
-    
-    import os.path
-    import geopandas as gpd
-    
-    overlap = 'n/a'
-    if os.path.isfile(ref_file):
-        ref_shp = gpd.read_file(ref_file)
-        basin = basin.dissolve() # Create a single polygon for intersection 
-        overlap = (ref_shp.intersection(basin, align=False).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
-    
-    return overlap
-
-def get_reference_areas(df,i):
-    
-    '''Reads reference areas from metadata file
-    
-    Input:
-    - df: dataframe with CAMELS-spat metadata file
-    - i: row index of basin under investigations
-    
-    Return:
-    - out: dictionary with {Reference area source: reference area [km^2]}
-    '''
-    
-    out = [[df['Ref_area_1_src'].iloc[i],   df['Ref_area_1_km2'].iloc[i]],
-           [df['Ref_area_2_src'].iloc[i],   df['Ref_area_2_km2'].iloc[i]],
-           [df['Ref_shape_source'].iloc[i], df['Ref_shape_area_km2'].iloc[i]]]
-    
-    return out
-
-def prepare_plotting_stats(ref_areas,area_lump,area_dist,overlap_lump,overlap_dist):
-    
-    '''Creates a list with statistics about the delineationthat is input to the main plotting function'''
-    
-    stats = ref_areas.copy()
-    stats.append(['Lumped basin', area_lump])
-    stats.append(['Distributed basin', area_dist])
-    stats.append(['Lumped basin', overlap_lump])
-    stats.append(['Distributed basin', overlap_dist])
-    stats
-    
-    return stats
-
-def add_statistics_to_axis(ax,basin_id,stats):
-    
-    # Make a string
-    txt = ('{}\n'
-           'Area comparison {:>31}\n'
-           'Ref 1: {:<32}: {:.2f}\n'
-           'Ref 2: {:<32}: {:.2f}\n'
-           'Ref 3: {:<32}: {:.2f}\n'
-           '       {:<32}: {:.2f}\n'
-           '       {:<32}: {:.2f}\n\n'
-           'Fractional overlap with reference shape {:>4}\n'
-           '       {:<32}: {:.2f}\n'
-           '       {:<32}: {:.2f}\n'
-           ''.format(basin_id,'[km^2]',
-                     stats[0][0],stats[0][1],
-                     stats[1][0],stats[1][1],
-                     stats[2][0],stats[2][1],
-                     stats[3][0],stats[3][1],
-                     stats[4][0],stats[4][1],
-                     '[-]',
-                     stats[5][0],stats[5][1],
-                     stats[6][0],stats[6][1]))
-    
-    # Write data onto axis                
-    ax.text(-0.1,0.85,txt, va='top', transform=ax.transAxes, family='monospace', fontsize=10)
-    
-    return
