@@ -37,9 +37,13 @@ def read_delineation_coords(df,i):
     
     '''Reads the station or ourlet location from CAMELS-spat metadata file.'''
     
-    # Preferentially use the outlet location if one is specified
-    if df['Outlet_lat'].iloc[i] > -999 and df['Outlet_lon'].iloc[i] > -999:
+    # Use a manual location if provided
+    if df['Manual_outlet_location'].iloc[i] == 'yes':
+        lat,lon = df['Manual_lat'].iloc[i],df['Manual_lon'].iloc[i]
+    # If not, preferentially use the outlet location if one is specified
+    elif df['Outlet_lat'].iloc[i] > -999 and df['Outlet_lon'].iloc[i] > -999:
         lat,lon = df['Outlet_lat'].iloc[i],df['Outlet_lon'].iloc[i]
+    # If neither manual nor outlet location are provided, use the station location
     else:
         lat,lon = df['Station_lat'].iloc[i],df['Station_lon'].iloc[i]
     
@@ -107,6 +111,8 @@ def subset_tifs_around_gauge(data_window, acc_file, fdir_file,
     - temp_fdir: path to and name of smaller flow direction tif
     '''
     
+    import os
+    import os.path
     from osgeo import gdal
     from pathlib import Path
         
@@ -120,6 +126,10 @@ def subset_tifs_around_gauge(data_window, acc_file, fdir_file,
     
         # Define where the small tif needs to go
         outfile = str(temp_path/small_files[ix])
+        
+        # If a temporary file already exists, remove it
+        if os.path.isfile(outfile):
+            os.remove(outfile)
 
         # Open the full tif
         ds = gdal.Open(infile)
@@ -434,7 +444,9 @@ def calculate_basin_and_reference_overlap(basin, ref_file, crs='ESRI:102800'):
     if os.path.isfile(ref_file):
         ref_shp = gpd.read_file(ref_file)
         basin = basin.dissolve() # Create a single polygon for intersection 
-        overlap = (ref_shp.intersection(basin, align=False).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+        overlap_1 = (ref_shp.intersection(basin, align=False).to_crs(crs).area / ref_shp.to_crs(crs).area)[0]
+        overlap_2 = (basin.intersection(ref_shp, align=False).to_crs(crs).area / basin.to_crs(crs).area)[0]
+        overlap = min(overlap_1,overlap_2)
     
     return overlap
 
