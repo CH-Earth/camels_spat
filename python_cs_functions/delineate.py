@@ -40,10 +40,13 @@ def read_delineation_coords(df,i):
     # Use a manual location if provided
     if df['Manual_outlet_location'].iloc[i] == 'yes':
         lat,lon = df['Manual_lat'].iloc[i],df['Manual_lon'].iloc[i]
-    # If not, preferentially use the outlet location if one is specified
+    # If not, use the mapped locations 
+    elif df['Mapped_lat'].iloc[i] > -999 and df['Mapped_lon'].iloc[i] > -999:
+        lat,lon = df['Mapped_lat'].iloc[i],df['Mapped_lon'].iloc[i]
+    # If no mapped location is known (i.e. when we're about to do the mapping), preferentially use the outlet location if we have it
     elif df['Outlet_lat'].iloc[i] > -999 and df['Outlet_lon'].iloc[i] > -999:
         lat,lon = df['Outlet_lat'].iloc[i],df['Outlet_lon'].iloc[i]
-    # If neither manual nor outlet location are provided, use the station location
+    # If no outlet location is provided, use the station location instead
     else:
         lat,lon = df['Station_lat'].iloc[i],df['Station_lon'].iloc[i]
     
@@ -199,6 +202,42 @@ def fix_geom(in_feature):
                 in_feature.loc[[index],'geometry'] =  in_feature.loc[[index], 'geometry'].buffer(0)
                 
     return in_feature
+
+def find_subbasin_containing_point(shp,point):
+    
+    '''Finds which polygon in a shape contains a given (lon,lat) coordinate,
+    
+    Inputs:
+    - shp:   shapefile with polygon geometries
+    - point: Shapely Point() with lon,lat coordinate
+    
+    Returns:
+    - Masked shapefile showing the row of the polygon that contains point
+    '''
+    
+    mask = shp.contains(point)
+    if not any(mask):
+        print('ERROR: find_subbasin_containing_point: shape does not contain point')
+    
+    return shp[mask]
+
+def extract_shape_subset(large_shp, id_name, ids):
+    
+    '''Extracts a sub-domain from a larger shape.
+    
+    Inputs:
+    - large_shp: shapefile containing the full domain, with at minimum an ID column
+    - id_name:   name of the ID column in the shapefile
+    - ids:       IDs to be extracted
+    
+    Returns:
+    - Masked shapefile showing only the selected IDs.
+    '''
+    
+    # Extract the shape
+    small_shp = large_shp.loc[large_shp[id_name].isin(ids)]
+        
+    return small_shp
 
 # Lumped basin delineation
 # ------------------------------------------------------------------------------------------------------------------------
