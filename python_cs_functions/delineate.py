@@ -581,7 +581,7 @@ def add_statistics_to_axis(ax,basin_id,stats):
     
     return
 
-def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, statistics_text, save_path):
+def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_file, lat, lon, statistics_text, save_path, to_screen=False):
     
     '''Plots lumped and distributed discretization outcomes and reference shape (if available).
     
@@ -594,6 +594,9 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     - lat: latitude of delineation outlet
     - lon: longitude of delineation outlet
     - save_path: Path() to location where figure should be saved
+    
+    Optional inputs:
+    - to_screen: flag indicating if figure should be shown on screen or only saved to file. Default: False
     '''
     
     import os.path
@@ -697,5 +700,10 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     # ---------------------------------------------------------
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
+    
+    # Close if we don't want it displayed
+    # ---------------------------------------------------------
+    if not to_screen:
+        plt.close()
     
     return # nothing
