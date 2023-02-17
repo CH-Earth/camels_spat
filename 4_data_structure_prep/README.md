@@ -14,18 +14,22 @@ outlet locations are added to the metadata file during basin delineation steps.
 |------------------|-------------------------------|----------------------------------------------------------------------------------------------|
 | Country          | CAN/US                        | Country the gauge is in                                                                      |
 | Station_id       | 01AD002                       | Gauge ID issued by responsible governing body; used as persistent identifier in CAMELS-spat  |
-| Station_name     |                               |                                                                                              |
-| Station_lat      | <>                            | Gauge latitude as defined by governing body                                                  |
-| Station_lon      | <>                            | Gauge longitude as defined by governing body                                                 |
-| Outlet_lat       | <>                            | Longitude/latitude location used for basin delineation; result of iterative manual procedure |
-| Outlet_lon       | <>                            | Longitude/latitude location used for basin delineation; result of iterative manual procedure |
-| Basin_area_km2   | <>                            | Area of the delineated CAMELS-spat basin [km^2]                                              |
+| Station_name     | Saint John River at Fort Kent | Gauge name                                                                                   |
+| Station_lat      |  47.25806                     | Gauge latitude as defined by governing body                                                  |
+| Station_lon      | -68.59583                     | Gauge longitude as defined by governing body                                                 |
+| Station_source   | WSC 2022 data set             | Reference for station location                                                               |
+| Outlet_lat       |  47.25788                     | Longitude/latitude location used for basin delineation; result of iterative manual procedure |
+| Outlet_lon       | -68.59492                     | Longitude/latitude location used for basin delineation; result of iterative manual procedure |
+| Outlet_source    | WSC 2022 data set             | Reference for outlet location                                                                |
+| Basin_area_km2   | -999                          | Area of the delineated CAMELS-spat basin [km^2]. Populated later                             |
 | Ref_area_1_src   | HYDAT gross drainage area     | Source of the first reference basin area                                                     |
 | Reference area   | 14700                         | Area of the first reference shape in [km^2], if available                                    |
 | Ref_area_2_src   | HYDAT effective drainage area | Source of the second reference basin area                                                    |
 | Reference area   |                               | Area of the second reference shape in [km^2], if available                                   |
-| Reference shape  |                               | Flag to indicate if reference shape is available                                             |
-| Reference area   |                               | Area of the reference shape in [km^2], if available                                          |
+| Reference shape  | yes                           | Flag to indicate if reference shape is available                                             |
+| Reference area   | 14677.4                       | Area of the reference shape in [km^2], if available                                          |
 
 ## Data structure prep
-Creates an output folder structure. Copies reference shape to destination folder and stores reference shape area in the metadata file if a reference shape is available.
+Creates an output folder structure. Copies reference shape to destination folder and stores reference shape area in the metadata file if a reference shape is available. Also updates station and outlet locations for the Canadian WSC2022 basins.
+
+## Define 
