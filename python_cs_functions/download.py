@@ -39,3 +39,28 @@ def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}):
             break           
     
     return
+
+# File paths and names
+# ------------------------------------------------------------------------------------------------------------------------
+def prepare_flow_download_outputs(df,i,data_path):
+    
+    '''Prepares output folder and file paths for flow observation downloads'''
+    
+    from pathlib import Path
+    
+    # Get identifiers
+    country = df.iloc[i].Country
+    basin_id = df.iloc[i].Station_id
+    full_id = country + '_' + basin_id
+    
+    # Construct the paths
+    main_folder = Path(data_path) / 'basin_data' / (country + '_' + basin_id) / 'observations'
+    
+    # Make the paths
+    main_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Make the output file paths
+    raw_file = main_folder / (full_id + '_flow_observations_raw.csv')
+    hour_file = main_folder / (full_id + '_flow_observations_hour.csv')
+    
+    return basin_id, full_id, raw_file, hour_file
