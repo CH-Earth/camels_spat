@@ -555,6 +555,14 @@ def prepare_plotting_legend(handles,labels,label,**kwargs):
 
 def add_statistics_to_axis(ax,basin_id,stats):
     
+    import numpy as np
+    
+    # Check inputs - 
+    # if no reference shape exists, stats[5][1], stats[6][1] are 'n/a'
+    if stats[5][1] == 'n/a': stats[5][1] = np.nan
+    if stats[6][1] == 'n/a': stats[6][1] = np.nan 
+    if stats[2][1] == -999:  stats[6][1] = np.nan 
+    
     # Make a string
     txt = ('{}\n'
            'Area comparison {:>31}\n'
@@ -662,7 +670,7 @@ def plot_discretization_results(basin_id, lump_shp, basin_shp, river_shp, ref_fi
     
     # Shapes
     basin_shp.plot(ax=ax, facecolor=cfac, edgecolor=cedg) 
-    river_shp.plot(ax=ax, color=criv)
+    if len(river_shp) > 0: river_shp.plot(ax=ax, color=criv)
     if have_ref: ref_shp.boundary.plot(ax=ax, color=cref)
     ax.plot(lon,lat, marker='o', markeredgecolor='k', markerfacecolor='w', markersize=10)
     
