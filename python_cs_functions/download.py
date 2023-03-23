@@ -60,7 +60,9 @@ def prepare_flow_download_outputs(df,i,data_path):
     main_folder.mkdir(parents=True, exist_ok=True)
     
     # Make the output file paths
-    raw_file = main_folder / (full_id + '_flow_observations_raw.csv')
-    hour_file = main_folder / (full_id + '_flow_observations_hour.csv')
+    raw_file  = main_folder / (full_id + '_raw.txt') # To contain server response
+    data_file = main_folder / (full_id + '_flow_observations_raw.csv') # To contain data only
+    meta_file = main_folder / (full_id + '_header.txt') # To contain metadata/header info only
+    hour_file = main_folder / (full_id + '_flow_observations_hourly.nc') # Final file, to contain hourly data and metadata
     
-    return basin_id, full_id, raw_file, hour_file
+    return basin_id, full_id, raw_file, data_file, meta_file, hour_file
