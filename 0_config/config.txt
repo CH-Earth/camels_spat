@@ -56,3 +56,5 @@ merged_shp_name | merged_lumped_outlines.shp | string  # Name of the file that c
 # 6. Flow data downloads
 usgs_start_t    | 1950-01-01               | string  # Start time for USGS data downloads
 usgs_start_e    | 2023-01-02               | string  # End time for USGS data downloads
+wsc_start_t     | 2021-06-01               | string  # Start time for WSC data downloads; currently limited because WSC only allows downloads up to present-18 months
+wsc_start_e     | 2023-01-02               | string  # End time for WSC data downloads
