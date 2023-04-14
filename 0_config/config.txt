@@ -44,15 +44,17 @@ merit_flow_dir_url  | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distri
 merit_shps_hs_id    | ee4a497fbac2422d95b45e193c06cdc5                                                 | string  # HydroShare resource ID that contains MERIT Hydro-derived shapefiles
 
 # 4. Meta data file 
-cs_basin_path  | camels-spat-data         | string  # Name of the folder where all the Camels-spat data is supposed to go. Appended to 'data_path'
-cs_meta_name   | camels_spat_metadata.csv | string  # Name of the metadata file to be generated and used
+cs_basin_path    | camels-spat-data          | string  # Name of the folder where all the Camels-spat data is supposed to go. Appended to 'data_path'
+cs_meta_name     | camels_spat_metadata.csv  | string  # Name of the metadata file to be generated and used
+cs_unusable_name | camels_spat_unusable.csv  | string  # Name of the metadata file that tracks which catchments we cannot use and why
 
 # 5. Basin delineation
-equal_area_crs | ESRI:102008              | string  # Coordinate Reference System to calculate polygon areas in
+equal_area_crs  | ESRI:102008                | string  # Coordinate Reference System to calculate polygon areas in
+merged_shp_dir  | merged_lumped_shapes       | string  # Name of the folder where the merged shape will be stored. Appended to '[cs_basin_path] / basin_data'
+merged_shp_name | merged_lumped_outlines.shp | string  # Name of the file that contains the merged lumped shapes
 
 # 6. Flow data downloads
 usgs_start_t    | 1950-01-01               | string  # Start time for USGS data downloads
 usgs_start_e    | 2023-01-02               | string  # End time for USGS data downloads
-usgs_edt_to_utc | 
-
-
+wsc_start_t     | 2021-06-01               | string  # Start time for WSC data downloads; currently limited because WSC only allows downloads up to present-18 months
+wsc_start_e     | 2023-01-02               | string  # End time for WSC data downloads
