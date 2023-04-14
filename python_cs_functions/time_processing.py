@@ -1,5 +1,11 @@
 '''Contains functions for temporal processing of downloaded data (timezones, averaging, etc.)'''
 
+import numpy as np
+import pandas as pd
+from scipy import integrate
+from datetime import timedelta
+from datetime import datetime
+
 # Time zone conversion
 # ---------------------------------------
 def tz_abbreviation_to_utc(tz_str):
@@ -52,11 +58,6 @@ def datetime_str_to_timeaware_datetime(date_str, offset='+00:00:00', localize_to
 
 # Resampling to hourly
 # --------------------
-import numpy as np
-import pandas as pd
-from scipy import integrate
-from datetime import timedelta
-
 # Fill gaps with temporary values where needed
 def fill_data_gaps_on_integration_bounds(df, data='data', center_window=True):
     
@@ -181,6 +182,52 @@ def resample_arbitrary_flux_observations_to_hourly(df, data='data', center_windo
         df_H = df_H.drop(['time_diff_in_sec','volume_between_now_and_next','is_obs','is_obs_RHS'], axis=1)
     
     return df, df_H
+
+def return_data_quality_flag_meaning(l,country):
+    
+    '''Loops over a list of data quality flags and returns a list with the appropriate flag meanings'''
+    
+    # Select the correct dictionary
+    if country.lower() == 'usa':
+        standards = {'nan'    : 'Unknown',
+                     'A:[0]'  : 'Undefined',
+                     'A:<'    : 'Approved, but reported value known to be inaccurate (real value is lower)',
+                     'A:>'    : 'Approved, but reported value known to be inaccurate (real value is higher)',
+                     'A:[4]'  : 'Approved, but with Incomplete or Partial Aggregated Record',
+                     'P:e'    : 'Provisional AND estimated',
+                     'P'      : 'Provisional, not approved',
+                     'A:R'    : 'Approved, but revised',
+                     'A:e'    : 'Approved AND estimated, with unknown data grade code',
+                     'A'      : 'Approved, with unknown data grade code',
+                     'A:[93]' : 'Approved, with IV verification DV <= 10 percent diff',
+                     'A:[92]' : 'Approved, with IV verification DV <= 5 percent diff',
+                     'A:[91]' : 'Approved, with IV verification DV <= 1 percent diff',
+                     'A:[90]' : 'Approved, with IV verification DV <= 0.01 orig DV = 0'
+                    }
+    elif country.lower() == 'can':
+        standards = {'nan'                          : 'Unknown',
+                     'Provisional/Provisoire:0'     : 'Provisional, flag unknown (not described in WSC docs)',
+                     'Provisional/Provisoire:40'    : 'Provisional, dry (water level below sensor)',
+                     'Provisional/Provisoire:10'    : 'Provisional, ice-affected',
+                     'Provisional/Provisoire:20'    : 'Provisional, estimated',
+                     'Provisional/Provisoire:30'    : 'Provisional, partial day (relevant only for daily means)',
+                     'Provisional/Provisoire:nan'   : 'Approved, no qualifier specified',
+                     'Provisional/Provisoire:-1'    : 'Provisional, no special conditions',
+                     'Provisional/Provisoire:50'    : 'Provisional, revised',
+                     'Final/Finales:0'              : 'Approved, flag unknown (not described in WSC docs)',
+                     'Final/Finales:40'             : 'Approved, dry (water level below sensor)',
+                     'Final/Finales:10'             : 'Approved, ice-affected',
+                     'Final/Finales:50'             : 'Approved, but revised',
+                     'Final/Finales:20'             : 'Approved, but estimated',
+                     'Final/Finales:30'             : 'Approved, partial day (relevant only for daily means)',
+                     'Final/Finales:nan'            : 'Approved, no qualifier specified',
+                     'Final/Finales:-1'             : 'Approved, no special conditions'
+                    }
+    
+    # Map flags onto meanings
+    meanings = [standards[item] for item in l]
+    
+    return meanings
 
 def select_minimal_usgs_data_quality_flag(flags):
     
@@ -313,3 +360,156 @@ def assign_hourly_quality_flag(df, df_H, country, center_window=True):
             a = 0
     
     return df_H
+
+# To netcdf
+# -----------
+def prep_country_csv_for_netcdf(csv_path,country):
+    
+    '''Loads a .csv with observed flow data and processes according to the country the data originates from'''
+    
+    # Load the data
+    csv = pd.read_csv(csv_path, index_col=0, parse_dates=True)    
+    
+    # General processing
+    csv.index.name = 'time'
+    data_name = 'q_obs'
+    flag_name = 'q_obs_data_quality'
+    data_conversion = 0.0283168466 # m^3 ft^-3
+    
+    # Ensure the index is not timezone-aware, because this trips up the conversion to netcdf dimension later
+    csv.index = csv.index.tz_localize(None)
+    
+    # Country-specific processing
+    if country.lower() == 'usa':
+        csv = csv.rename(columns={'obs_00060': data_name})
+        
+        # Unit conversion
+        # We know all the USGS data is in cubic feet per second, because we checked this in 1b_usa_flow_obs_to_utc.ipynb
+        print('Warning: converting data from units feet^3 s^-1 to m^3 s^-1')
+        csv[data_name] = csv[data_name] * data_conversion
+        
+        # Drop the columns we added to the csv's for the Canadian data
+        if 'is_below_sensor_level' in csv.columns:
+            csv = csv.drop(columns=['is_below_sensor_level'])
+        
+    elif country.lower() == 'can':
+        csv = csv.rename(columns={'Value/Valeur': data_name})
+        
+        # Unit conversion
+        # Data comes in m3/s (p.3): https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/Document/WebService_Guidelines.pdf
+        
+        # Drop the columns we added to the csv's for the US data
+        if 'is_malfunction_affected' in csv.columns:
+            csv = csv.drop(columns=['is_malfunction_affected'])
+        if 'is_backwater_affected' in csv.columns:
+            csv = csv.drop(columns=['is_backwater_affected'])
+        
+    # Check that all data values are derived from observations, and proceed if so
+    assert all(csv['based_on_obs'][csv['q_obs'].notna()] == 1), f'Not all data values in {csv_path} are derived from observations. Aborting.'
+    csv = csv.drop(columns=['based_on_obs'])
+    
+    # Find and rename all auxilliary variables
+    csv = csv.rename(columns={'minimum_data_quality': flag_name})
+    for column in csv.columns:
+        if not 'q_obs' in column:
+            csv = csv.rename(columns={column: 'q_obs_'+column}) # prepends 'q_obs' to any remaining variables
+    
+    return csv
+    
+def flow_csv_to_netcdf(csv, nc_path, country, station):
+    
+    '''Converts a standardized csv file with flow observations to xarray data set and saves as netcdf'''
+    
+    # 1. Define standard values
+    # -------------------------
+    
+    # Auxiliary
+    global_att_countries = ['USA', 'CAN', 'MEX']
+    global_att_i = global_att_countries.index(country)
+    global_att_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Global attributes
+    global_att_ttl = 'CAMELS-spat streamflow data'
+    global_att_con = 'CF-1.10'
+    global_att_src = 'Streamflow derived from observed water levels'
+    global_att_ins = ['United States Geological Survey',
+                      'Water Survey of Canada']
+    global_att_ref = [('U.S. Geological Survey, 2016, National Water Information System data available ' +
+                       'on the World Wide Web (USGS Water Data for the Nation), accessed 2023-03-23, at '+
+                       'URL [http://waterdata.usgs.gov/nwis/]'),
+                      ('Original data extracted from the Environment and Climate Change Canada Real-time' +
+                       'Hydrometric Data web site (https://wateroffice.ec.gc.ca/mainmenu/real_time_data_index_e.html)' + 
+                       'on 2023-04-05')]
+    global_att_his = (f'{global_att_now} | File prepared using CAMELS-spat scripts. See:' + 
+                       'https://github.com/CH-Earth/camels-spat')
+    global_att_com = 'n/a'
+    
+    # Data variables
+    q_obs_unit = 'm3 s-1'
+    q_obs_long = 'observed streamflow values'
+    q_obs_anc = [column for column in csv.columns if '_is_' in column] # Get names of all ancillary variables in .csv 
+    q_obs_anc.append('q_obs_data_quality') # add the 'q_obs_data_quality' variable that's not captured by the above
+    q_obs_anc = ' '.join([f"'{anc}'" for anc in q_obs_anc]) # convert full list into single string
+    
+    # Time settings
+    time_unit = 'minutes since 1950-01-01 00:00:00'
+    time_cal = 'proleptic_gregorian'
+    
+    # 2. Create a basic data set to build from
+    ds = csv.to_xarray()
+    
+    # 3. Global attributes
+    ds.attrs['title'] = global_att_ttl
+    ds.attrs['conventions'] = global_att_con
+    ds.attrs['source'] = global_att_src
+    ds.attrs['country'] = country
+    ds.attrs['station'] = station
+    ds.attrs['institution'] = global_att_ins[global_att_i]
+    ds.attrs['references'] = global_att_ref[global_att_i]
+    ds.attrs['history'] = global_att_his
+    #ds.attrs['comment'] = global_att_com
+
+    # 4a. Time attributes (coordinate already exists)
+    # NOTE: attributes 'units' and 'calendar' are automatically specified when writing to netcdf
+    #       This can be checked by saving to netcdf, and then loading as follows: xr.open_dataset(nc_path, decode_times=False)
+    ds.time.attrs['standard_name'] = 'time'
+    ds.time.attrs['bounds'] = 'time_bnds'
+    ds.time.encoding['units'] = time_unit
+    ds.time.encoding['calendar'] = time_cal
+        
+    # 4b. Time bounds variable
+    ds = ds.assign_coords(nbnds=[1,2])
+    ds = ds.assign(time_bnds=(['nbnds','time'],
+                              [csv.index - pd.Timedelta('30min'), csv.index + pd.Timedelta('30min')]))
+    ds.nbnds.attrs['standard_name'] = 'bounds for timestep intervals'
+    ds.time_bnds.attrs['long_name'] = 'start and end points of each time step'
+    
+    # 5. Observed streamflow
+    ds.q_obs.attrs['units'] = q_obs_unit
+    ds.q_obs.attrs['long_name'] = q_obs_long
+    ds.q_obs.attrs['cell_methods'] = 'time:mean' # indicating that values are average values over the timestep
+    ds.q_obs.attrs['ancillary_variables'] = q_obs_anc
+    ## TO DO: add other variables to ancillary_variables list
+    
+    # 6. Data quality flags
+    flags = [str(s) for s in csv['q_obs_data_quality'].unique()]
+    flags.sort()
+    meanings = return_data_quality_flag_meaning(flags,country)
+    ds.q_obs_data_quality.attrs['standard_name'] = 'quality_flag'
+    ds.q_obs_data_quality.attrs['long_name'] = 'lowest data quality flag listed in the values used to generate an average flow value for each timestep'
+    ds.q_obs_data_quality.attrs['flag_values'] = ' '.join([f"'{flag}'" for flag in flags])
+    ds.q_obs_data_quality.attrs['flag_meanings'] = ' '.join([f"'{meaning}'" for meaning in meanings])
+    
+    # 7. Other status variables
+    for variable in ds.variables:
+        if '_is_' in variable:
+            ds[variable].attrs['standard_name'] = 'quality_flag'
+            ds[variable].attrs['long_name'] = 'flag indicating if main variable is affected by process in variable name'
+            ds[variable].attrs['flag_values'] = "'0' '1'"
+            ds[variable].attrs['flag_meanings'] = "'no' 'yes'"
+    
+    # Save to file
+    ds = ds.drop_indexes(['time','nbnds'])
+    ds.to_netcdf(nc_path)
+    
+    return ds
