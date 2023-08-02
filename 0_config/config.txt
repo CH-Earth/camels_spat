@@ -22,18 +22,20 @@ reqs_path | 1_Python_setup\                 | string  # Sub-folders in root that
 reqs_file | 0_requirements.txt              | string  # Python environment requirements for `pip install -r reqs.txt`
 
 # 2. Reference shapefiles
-ref_shps_path         | reference_shapes                                                                                                          | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files. Appended to 'data_path'
-us_camels_meta_url    | https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.xlsx                                                     | string  # Download URL for CAMELS-US metadata information
-us_camels_topo_url    | https://gdex.ucar.edu/dataset/camels/file/camels_topo.txt                                                                 | string  # Download URL for CAMELS-US topography information
-us_camels_name_url    | https://gdex.ucar.edu/dataset/camels/file/camels_name.txt                                                                 | string  # Download URL for CAMELS-US topography information
-us_camels_shps_url    | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                                          | string  # Download URL for CAMELS-US shapefiles
-can_rhbn_meta_url     | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/RHBN/RHBN_Metadata.xlsx                                           | string  # FTP URL for Reference Hydrometric Basin Network (RHBN) data downloads, specifically the metadata file
-can_hydat_db_url      | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/Hydat_sqlite3_20220721.zip                                        | string  # FTP URL for HYDAT database download
-can_hydat_meta_url    | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HYDAT_Definition_EN.pdf                                           | string  # FTP URL for HYDAT database description download
-can_wsc_2016_shps_url | https://donnees.ec.gc.ca/data/water/products/national-hydrometric-network-basin-polygons/WSC_Basins.gdb.zip               | string  # Download URL for WSC 2016 reference shapefiles
-can_wsc_2022_shps_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/*.zip                             | string  # Download URL for WSC 2022 reference shapefiles; * should be replaced by 01, 02, .., 11
-can_wsc_2022_meta_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Prerelease_included_stations.txt  | string  # Download URL for WSC 2022 station list and meta data file
-can_wsc_2022_rdme_url | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Read_me.pdf                       | string  # Download URL for WSC 2022 pre-release readme
+ref_shps_path          | reference_shapes                                                                                                          | string  # Main folder for reference shapefiles. Internal order hard-coded in processing files. Appended to 'data_path'
+us_camels_meta_url     | https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.xlsx                                                     | string  # Download URL for CAMELS-US metadata information
+us_camels_topo_url     | https://gdex.ucar.edu/dataset/camels/file/camels_topo.txt                                                                 | string  # Download URL for CAMELS-US topography information
+us_camels_name_url     | https://gdex.ucar.edu/dataset/camels/file/camels_name.txt                                                                 | string  # Download URL for CAMELS-US topography information
+us_camels_shps_url     | https://gdex.ucar.edu/dataset/camels/file/basin_set_full_res.zip                                                          | string  # Download URL for CAMELS-US shapefiles
+can_rhbn_meta_url      | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/RHBN/RHBN_Metadata.xlsx                                           | string  # FTP URL for Reference Hydrometric Basin Network (RHBN) data downloads, specifically the metadata file
+can_hydat_db_url       | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/Hydat_sqlite3_20230505.zip                                        | string  # FTP URL for HYDAT database download
+can_hydat_meta_url     | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HYDAT_Definition_EN.pdf                                           | string  # FTP URL for HYDAT database description download
+can_wsc_2016_shps_url  | https://donnees.ec.gc.ca/data/water/products/national-hydrometric-network-basin-polygons/WSC_Basins.gdb.zip               | string  # Download URL for WSC 2016 reference shapefiles
+can_wsc_2022_shps_url  | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/*.zip                             | string  # Download URL for WSC 2022 reference shapefiles; * should be replaced by 01, 02, .., 11
+can_wsc_2022_meta_url  | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Prerelease_included_stations.txt  | string  # Download URL for WSC 2022 station list and meta data file
+can_wsc_2022_rdme_url  | https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/HydrometricNetworkBasinPolygons/Read_me.pdf                       | string  # Download URL for WSC 2022 pre-release readme
+standard_time_shp_path | 0_standard_timezone_shapefile                                                                                             | string  # Folder inside [code_path] where the shapefile with standard time zone definitions can be found
+standard_time_shp_name | can_usa_timezones.shp                                                                                                     | string  # Name of the the shapefile with standard time zone definitions
 
 # 3. MERIT Hydro data
 merit_path          | merit_hydro_files                                                                | string  # Main folder for MERIT Hydro data and shapefiles. Sub-folders hard-coded in processing files. Appended to 'data_path'
@@ -58,3 +60,5 @@ usgs_start_t    | 1950-01-01               | string  # Start time for USGS data 
 usgs_start_e    | 2023-01-02               | string  # End time for USGS data downloads
 wsc_start_t     | 2021-06-01               | string  # Start time for WSC data downloads; currently limited because WSC only allows downloads up to present-18 months
 wsc_start_e     | 2023-01-02               | string  # End time for WSC data downloads
+hydat_start_t   | 1950-01-01               | string  # Start time for HYDAT data extraction
+hydat_start_e   | 2023-01-02               | string  # End time for HYDAT data extraction
