@@ -11,18 +11,24 @@ from datetime import datetime
 def tz_abbreviation_to_utc(tz_str):
     '''Takes a timezone abbreviation used by USGS and converts to UTC-xx'''
     
+    # Source: https://nrc.canada.ca/en/certifications-evaluations-standards/canadas-official-time/time-zones-daylight-saving-time
+    # Source: https://www.timeanddate.com/time/zones/akst
+    
     # Check inputs
     assert type(tz_str) == str, f'Input tz_str must be {str} but is {type(tz_str)}'
     
     # Define abbreviation-to-UTC dictionary
-    dict_abbr_to_utc = {'CDT': 'UTC-05', # Ambiguous: Central Daylight Time.  Possibly legacy part of pytz: CST6CDT
-                        'CST': 'UTC-06', # Ambiguous: Central Standard Time.  Not in pytz
-                        'EDT': 'UTC-04', #            Eastern Daylight Time.  legacy part of pytz:          EST5EDT
-                        'EST': 'UTC-05', #            Eastern Standard Time.  Part of pytz:                 EST
-                        'MDT': 'UTC-06', #            Mountain Daylight Time. legacy part of pytz:          MST7MDT
-                        'MST': 'UTC-07', # Ambiguous: Mountain Standard Time. Possibly art of pytz:         MST
-                        'PDT': 'UTC-07', #            Pacific Daylight Time.  Legacy part of pytz:          PST8PDT
-                        'PST': 'UTC-08'} #            Pacific Standard Time.  Not in pytz
+    dict_abbr_to_utc = {'AST': 'UTC-04',    #            Atlantic Standard Time. 
+                        'CDT': 'UTC-05',    # Ambiguous: Central Daylight Time.  Possibly legacy part of pytz: CST6CDT
+                        'CST': 'UTC-06',    # Ambiguous: Central Standard Time.  Not in pytz
+                        'EDT': 'UTC-04',    #            Eastern Daylight Time.  legacy part of pytz:          EST5EDT
+                        'EST': 'UTC-05',    #            Eastern Standard Time.  Part of pytz:                 EST
+                        'LST': 'UTC-09',    #            Official abbreviation AKST: Alaska Standard Time
+                        'MDT': 'UTC-06',    #            Mountain Daylight Time. legacy part of pytz:          MST7MDT
+                        'MST': 'UTC-07',    # Ambiguous: Mountain Standard Time. Possibly part of pytz:        MST
+                        'NST': 'UTC-0330',  #            Newfoundland Standard Time.
+                        'PDT': 'UTC-07',    #            Pacific Daylight Time.  Legacy part of pytz:          PST8PDT
+                        'PST': 'UTC-08'}    #            Pacific Standard Time.  Not in pytz   
     
     return dict_abbr_to_utc[tz_str]
 
@@ -33,11 +39,13 @@ def relative_utc_to_timedelta(utc_str):
     assert type(utc_str) == str, f'Input tz_str must be {str} but is {type(utc_str)}'
     
     # Define UTC-to-timedelta dictionary
-    dict_utc_to_timedelta = {'UTC-04': '+4:00:00',
-                             'UTC-05': '+5:00:00',
-                             'UTC-06': '+6:00:00',
-                             'UTC-07': '+7:00:00',
-                             'UTC-08': '+8:00:00'}
+    dict_utc_to_timedelta = {'UTC-0330': '+3:30:00',
+                             'UTC-04'  : '+4:00:00',
+                             'UTC-05'  : '+5:00:00',
+                             'UTC-06'  : '+6:00:00',
+                             'UTC-07'  : '+7:00:00',
+                             'UTC-08'  : '+8:00:00',
+                             'UTC-09'  : '+9:00:00'}
     
     return dict_utc_to_timedelta[utc_str]
 
@@ -187,13 +195,26 @@ def return_data_quality_flag_meaning(l,country):
     
     '''Loops over a list of data quality flags and returns a list with the appropriate flag meanings'''
     
+    # Sources:
+    # https://help.waterdata.usgs.gov/codes-and-parameters/instantaneous-value-qualification-code-uv_rmk_cd
+    # https://help.waterdata.usgs.gov/code/grade_cd_query?fmt=html
+    # https://wateroffice.ec.gc.ca/contactus/faq_e.html#Q15
+    # HYDAT database (daily data quality flags)
+    
     # Select the correct dictionary
     if country.lower() == 'usa':
-        standards = {'nan'    : 'Unknown',
+        standards = {# Values below are USGS' quality flags that come with the data. Special conditions (backwater effects
+                     #  equipment malfunction, ice affected) are listed as strings in the data column itself. We have removed
+                     #  these strings in an earlier step, and traced those occurences in separate variables 
+                     #  (e.g. is_ice_affected). There is no need to list those abbreviations in this function, because this
+                     #  function is only applied to the data_quality columns and in the USGS case that column does not contain
+                     #  these extra flags. 
+                     'nan'    : 'Unknown',
                      'A:[0]'  : 'Undefined',
                      'A:<'    : 'Approved, but reported value known to be inaccurate (real value is lower)',
                      'A:>'    : 'Approved, but reported value known to be inaccurate (real value is higher)',
                      'A:[4]'  : 'Approved, but with Incomplete or Partial Aggregated Record',
+                     'P:[4]'  : 'Provisional, with Incomplete or Partial Aggregated Record',
                      'P:e'    : 'Provisional AND estimated',
                      'P'      : 'Provisional, not approved',
                      'A:R'    : 'Approved, but revised',
@@ -205,7 +226,8 @@ def return_data_quality_flag_meaning(l,country):
                      'A:[90]' : 'Approved, with IV verification DV <= 0.01 orig DV = 0'
                     }
     elif country.lower() == 'can':
-        standards = {'nan'                          : 'Unknown',
+        standards = {# Instantaneous data quality flags
+                     'nan'                          : 'Unknown',
                      'Provisional/Provisoire:0'     : 'Provisional, flag unknown (not described in WSC docs)',
                      'Provisional/Provisoire:40'    : 'Provisional, dry (water level below sensor)',
                      'Provisional/Provisoire:10'    : 'Provisional, ice-affected',
@@ -221,7 +243,13 @@ def return_data_quality_flag_meaning(l,country):
                      'Final/Finales:20'             : 'Approved, but estimated',
                      'Final/Finales:30'             : 'Approved, partial day (relevant only for daily means)',
                      'Final/Finales:nan'            : 'Approved, no qualifier specified',
-                     'Final/Finales:-1'             : 'Approved, no special conditions'
+                     'Final/Finales:-1'             : 'Approved, no special conditions',
+                     # Daily data quality flags
+                     'A'                            : 'Partial day',
+                     'B'                            : 'Ice Conditions',
+                     'D'                            : 'Dry',
+                     'E'                            : 'Estimated',
+                     'S'                            : 'Sample(s) collected this day'
                     }
     
     # Map flags onto meanings
@@ -234,7 +262,8 @@ def select_minimal_usgs_data_quality_flag(flags):
     '''Compares a list of flags to defined standards and selects the lowest quality flag in the list as a string'''
     
     # https://help.waterdata.usgs.gov/codes-and-parameters/instantaneous-value-qualification-code-uv_rmk_cd
-       
+    # https://help.waterdata.usgs.gov/code/grade_cd_query?fmt=html
+    
     # quality order
     standards = ['nan',    # Unknown
                  'A:[0]',  # Undefined
@@ -363,7 +392,7 @@ def assign_hourly_quality_flag(df, df_H, country, center_window=True):
 
 # To netcdf
 # -----------
-def prep_country_csv_for_netcdf(csv_path,country):
+def prep_subdaily_country_csv_for_netcdf(csv_path,country):
     
     '''Loads a .csv with observed flow data and processes according to the country the data originates from'''
     
@@ -415,8 +444,119 @@ def prep_country_csv_for_netcdf(csv_path,country):
             csv = csv.rename(columns={column: 'q_obs_'+column}) # prepends 'q_obs' to any remaining variables
     
     return csv
+
+def prep_daily_country_csv_for_netcdf(csv_path,country,tz):
     
-def flow_csv_to_netcdf(csv, nc_path, country, station):
+    # 0. General processing settings
+    indx_name = 'time'
+    data_name = 'q_obs'
+    flag_name = 'q_obs_data_quality'
+    data_conversion = 0.0283168466 # m^3 ft^-3
+    
+    # USA-specific codes
+    usa_streamflow_codes = ['***', 'Bkw', 'Dis', 'Eqp', 'Ice', 'Rat', 'Ssn'] # https://help.waterdata.usgs.gov/codes-and-parameters/instantaneous-and-daily-value-status-codes
+    usa_required_columns = ['q_obs', 'q_obs_data_quality','tz_cd',
+                            'is_ice_affected','is_malfunction_affected','is_backwater_affected']
+    
+    # CAN-specific codes
+    can_streamflow_codes = ['A','B','D','E','S'] # HYDAT; see code blocks below
+    can_required_columns = ['q_obs', 'q_obs_data_quality','tz_cd',
+                            'is_ice_affected','is_partial_day','is_dry_day','is_estimated_value']
+    
+    # 1. Load the data
+    csv = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    
+    # 2. Ensure the index is not timezone-aware, because this trips up the conversion to netcdf dimension later
+    csv.index = csv.index.tz_localize(None)
+    csv.index.name = indx_name
+    
+    # 3. Prep new columns for status code processing
+    csv['is_ice_affected'] = 0
+    csv['is_malfunction_affected'] = 0
+    csv['is_backwater_affected'] = 0
+    csv['is_partial_day'] = 0
+    csv['is_dry_day'] = 0
+    csv['is_estimated_value'] = 0
+
+    # 4. Country-specific processing
+    if country.lower() == 'usa':
+        
+        # 3a. Replace column names
+        csv = csv.rename(columns={'obs_00060_00003': data_name,
+                                  'obs_00060_00003_cd': flag_name})
+        
+        # 3b. Move condition strings from the observation column into dedicated columns
+        for code in usa_streamflow_codes:
+            
+            # Handle specific flags
+            if code == 'Ice': 
+                csv.loc[csv[data_name] == code, 'is_ice_affected'] = 1
+            elif code == 'Eqp': 
+                csv.loc[csv[data_name] == code, 'is_malfunction_affected'] = 1
+            elif code == 'Bkw': 
+                csv.loc[csv[data_name] == code, 'is_backwater_affected'] = 1
+            
+            # Remove all flags so we can transform to float
+            csv[data_name] = csv[data_name].replace(code,np.nan)
+        
+        # 3c. Transform to float and remove negative values
+        csv[data_name] = csv[data_name].astype('float')
+        csv.loc[csv[data_name] < 0, data_name] = np.nan
+        
+        # 3d. Unit conversion
+        # We know all the USGS data is in cubic feet per second, because we checked this in 1d_usa_daily_flow_obs_to_csv.ipynb
+        print('Warning: converting data from units feet^3 s^-1 to m^3 s^-1')
+        csv[data_name] = csv[data_name] * data_conversion
+        
+        # 3e. Drop any columns we don't need later
+        for column in csv.columns:
+            if column not in usa_required_columns: 
+                csv = csv.drop(columns=[column])
+        
+        # 3f. Extra check: ensure that metadata timezone matches csv timezone
+        assert csv['tz_cd'].unique()[0] == tz, "metadata and csv timezone specification don't match"
+    
+    elif country.lower() == 'can':
+        
+        # 3a. Replace column names
+        csv = csv.rename(columns={'FLOW': data_name,
+                                  'SYMBOL': flag_name})
+        
+        # 3b. Move condition strings from the observation column into dedicated columns
+        for code in can_streamflow_codes:
+            
+            # Handle specific flags
+            if code == 'A': 
+                csv.loc[csv[data_name] == code, 'is_partial_day'] = 1
+            elif code == 'B': 
+                csv.loc[csv[data_name] == code, 'is_ice_affected'] = 1
+            elif code == 'D': 
+                csv.loc[csv[data_name] == code, 'is_dry_day'] = 1
+            elif code == 'E': 
+                csv.loc[csv[data_name] == code, 'is_estimated_value'] = 1
+        
+        # 3c. Remove negative values
+        csv.loc[csv[data_name] < 0, data_name] = np.nan
+        
+        # 3d. Add the timezone locale
+        # Get station location and match this to the "Standard timezone" shapefile
+        csv['tz_cd'] = tz
+        
+        # 3e. Drop any columns we don't need later
+        for column in csv.columns:
+            if column not in can_required_columns: 
+                csv = csv.drop(columns=[column])
+    
+    # 5. Find and rename all auxilliary variables
+    csv = csv.rename(columns={'minimum_data_quality': flag_name})
+    for column in csv.columns:
+        if not 'q_obs' in column:
+            csv = csv.rename(columns={column: 'q_obs_'+column}) # prepends 'q_obs' to any remaining variables
+    
+    return csv
+
+   
+def subdaily_flow_csv_to_netcdf(csv, nc_path, country, station):
     
     '''Converts a standardized csv file with flow observations to xarray data set and saves as netcdf'''
     
@@ -437,8 +577,8 @@ def flow_csv_to_netcdf(csv, nc_path, country, station):
     global_att_ref = [('U.S. Geological Survey, 2016, National Water Information System data available ' +
                        'on the World Wide Web (USGS Water Data for the Nation), accessed 2023-03-23, at '+
                        'URL [http://waterdata.usgs.gov/nwis/]'),
-                      ('Original data extracted from the Environment and Climate Change Canada Real-time' +
-                       'Hydrometric Data web site (https://wateroffice.ec.gc.ca/mainmenu/real_time_data_index_e.html)' + 
+                      ('Original data extracted from the Environment and Climate Change Canada Real-time ' +
+                       'Hydrometric Data web site (https://wateroffice.ec.gc.ca/mainmenu/real_time_data_index_e.html) ' + 
                        'on 2023-04-05')]
     global_att_his = (f'{global_att_now} | File prepared using CAMELS-spat scripts. See:' + 
                        'https://github.com/CH-Earth/camels-spat')
@@ -483,6 +623,7 @@ def flow_csv_to_netcdf(csv, nc_path, country, station):
                               [csv.index - pd.Timedelta('30min'), csv.index + pd.Timedelta('30min')]))
     ds.nbnds.attrs['standard_name'] = 'bounds for timestep intervals'
     ds.time_bnds.attrs['long_name'] = 'start and end points of each time step'
+    ds.time_bnds.attrs['time_zone'] = 'UTC'
     
     # 5. Observed streamflow
     ds.q_obs.attrs['units'] = q_obs_unit
@@ -512,4 +653,114 @@ def flow_csv_to_netcdf(csv, nc_path, country, station):
     ds = ds.drop_indexes(['time','nbnds'])
     ds.to_netcdf(nc_path)
     
+    return ds
+
+def daily_flow_csv_to_netcdf(csv, nc_path, country, station):
+    
+    '''Converts a standardized csv file with flow observations to xarray data set and saves as netcdf'''
+    
+    # 1. Define standard values
+    # -------------------------
+    
+    # Auxiliary
+    global_att_countries = ['USA', 'CAN', 'MEX']
+    global_att_i = global_att_countries.index(country)
+    global_att_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Global attributes
+    global_att_ttl = 'CAMELS-spat streamflow data'
+    global_att_con = 'CF-1.10'
+    global_att_src = 'Streamflow derived from observed water levels'
+    global_att_ins = ['United States Geological Survey',
+                      'Water Survey of Canada']
+    global_att_ref = [('U.S. Geological Survey, 2016, National Water Information System data available ' +
+                       'on the World Wide Web (USGS Water Data for the Nation), accessed 2023-03-23, at '+
+                       'URL [http://waterdata.usgs.gov/nwis/]'),
+                      ('Original data extracted from the Environment and Climate Change Canada Real-time ' +
+                       'Hydrometric Data web site (https://wateroffice.ec.gc.ca/mainmenu/real_time_data_index_e.html) ' + 
+                       'on 2023-04-05')]
+    global_att_his = (f'{global_att_now} | File prepared using CAMELS-spat scripts. See:' + 
+                       'https://github.com/CH-Earth/camels-spat')
+    global_att_com = (f'{global_att_ins[global_att_i]} calculates daily average flow values' +
+                      ' in the station\'s standard time (i.e., not UTC). See: variable time_bnds.')
+    
+    # Data variables
+    q_obs_unit = 'm3 s-1'
+    q_obs_long = 'observed streamflow values'
+    q_obs_anc = [column for column in csv.columns if '_is_' in column] # Get names of all ancillary variables in .csv 
+    q_obs_anc.append('q_obs_data_quality') # add the 'q_obs_data_quality' variable that's not captured by the above
+    q_obs_anc = ' '.join([f"'{anc}'" for anc in q_obs_anc]) # convert full list into single string
+    
+    # Time settings
+    time_unit = 'minutes since 1950-01-01 00:00:00'
+    time_cal = 'proleptic_gregorian'
+    
+    # Time settings - ensure the data only specifies a single time zone that was used for calculating averages
+    #                 Communications with USGS and WSC state that this should be the case
+    assert len(csv['q_obs_tz_cd'].unique()) == 1, "Multiple timezones specified in csv; there should be only one"
+    time_original_tz = csv['q_obs_tz_cd'].unique()[0]
+    
+    # 2. Create a basic data set to build from
+    ds = csv.to_xarray()
+        
+    # 3. Global attributes
+    ds.attrs['title'] = global_att_ttl
+    ds.attrs['conventions'] = global_att_con
+    ds.attrs['source'] = global_att_src
+    ds.attrs['country'] = country
+    ds.attrs['station'] = station
+    ds.attrs['institution'] = global_att_ins[global_att_i]
+    ds.attrs['references'] = global_att_ref[global_att_i]
+    ds.attrs['history'] = global_att_his
+    ds.attrs['comment'] = global_att_com
+    
+    # 4a. Time attributes (coordinate already exists)
+    # NOTE: attributes 'units' and 'calendar' are automatically specified when writing to netcdf
+    #       This can be checked by saving to netcdf, and then loading as follows: xr.open_dataset(nc_path, decode_times=False)
+    ds.time.attrs['standard_name'] = 'time'
+    ds.time.attrs['bounds'] = 'time_bnds'
+    ds.time.encoding['units'] = time_unit
+    ds.time.encoding['calendar'] = time_cal
+        
+    # 4b. Time bounds variable
+    ds = ds.assign_coords(nbnds=[1,2])
+    ds = ds.assign(time_bnds=(['nbnds','time'],
+                              [csv['time_bnds_l'], csv['time_bnds_r']]))
+    ds.nbnds.attrs['standard_name'] = 'bounds for timestep intervals'
+    ds.time_bnds.attrs['long_name'] = 'start and end points of each time interval'
+    ds.time_bnds.attrs['time_zone'] = 'UTC'
+    ds.time_bnds.attrs['station_standard_time'] = time_original_tz
+    
+    # 5. Observed streamflow
+    ds.q_obs.attrs['units'] = q_obs_unit
+    ds.q_obs.attrs['long_name'] = q_obs_long
+    ds.q_obs.attrs['cell_methods'] = 'time:mean' # indicating that values are average values over the timestep
+    ds.q_obs.attrs['ancillary_variables'] = q_obs_anc
+    ## TO DO: add other variables to ancillary_variables list
+    
+    # 6. Data quality flags
+    flags = [str(s) for s in csv['q_obs_data_quality'].unique()]
+    flags.sort()
+    while ' ' in flags: flags.remove(' ')  # Sometimes we have empty spaces with no specific meaning in the data quality column: take those out
+    meanings = return_data_quality_flag_meaning(flags,country)
+    ds.q_obs_data_quality.attrs['standard_name'] = 'quality_flag'
+    ds.q_obs_data_quality.attrs['long_name'] = 'data quality flag'
+    ds.q_obs_data_quality.attrs['flag_values'] = ' '.join([f"'{flag}'" for flag in flags])
+    ds.q_obs_data_quality.attrs['flag_meanings'] = ' '.join([f"'{meaning}'" for meaning in meanings])
+    
+    # 7. Other status variables
+    for variable in ds.variables:
+        if '_is_' in variable:
+            ds[variable].attrs['standard_name'] = 'quality_flag'
+            ds[variable].attrs['long_name'] = 'flag indicating if main variable is affected by process in variable name'
+            ds[variable].attrs['flag_values'] = "'0' '1'"
+            ds[variable].attrs['flag_meanings'] = "'no' 'yes'"
+    
+    # 8. Remove the timezone variables we added to get the time_bnds
+    ds = ds.drop_vars(['q_obs_tz_cd', 'datetime', 'tz_utc_str', 'tz_td_str', 'time_bnds_l', 'time_bnds_r'])
+    
+    # Save to file
+    ds = ds.drop_indexes(['time','nbnds'])
+    ds.to_netcdf(nc_path)
+        
     return ds

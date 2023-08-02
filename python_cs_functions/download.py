@@ -1,10 +1,14 @@
 '''Contains functions to perform downloads.'''
 
+import time
+import shutil
+import requests
+import pandas as pd
+import urllib.request
+from pathlib import Path
+
 def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}):
     
-    import shutil
-    import requests
-          
     # Extract the filename from the URL
     file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters
     
@@ -42,12 +46,10 @@ def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}):
 
 # File paths and names
 # ------------------------------------------------------------------------------------------------------------------------
-def prepare_flow_download_outputs(df,i,data_path):
+def prepare_flow_download_outputs(df,i,data_path,time='hourly'):
     
     '''Prepares output folder and file paths for flow observation downloads'''
-    
-    from pathlib import Path
-    
+      
     # Get identifiers
     country = df.iloc[i].Country
     basin_id = df.iloc[i].Station_id
@@ -60,9 +62,53 @@ def prepare_flow_download_outputs(df,i,data_path):
     main_folder.mkdir(parents=True, exist_ok=True)
     
     # Make the output file paths
-    raw_file  = main_folder / (full_id + '_raw.txt') # To contain server response
-    data_file = main_folder / (full_id + '_flow_observations_raw.csv') # To contain data only
-    meta_file = main_folder / (full_id + '_header.txt') # To contain metadata/header info only
-    hour_file = main_folder / (full_id + '_flow_observations_hourly.nc') # Final file, to contain hourly data and metadata
+    raw_file  = main_folder / (full_id + '_{}_raw.txt'.format(time)) # To contain server response
+    data_file = main_folder / (full_id + '_{}_raw_flow_observations.csv'.format(time)) # To contain data only
+    head_file = main_folder / (full_id + '_{}_raw_header.txt'.format(time)) # To contain metadata/header info only
+    nc_file = main_folder / (full_id + '_{}_flow_observations.nc'.format(time)) # Final file, to contain hourly data and metadata
     
-    return basin_id, full_id, raw_file, data_file, meta_file, hour_file
+    return basin_id, full_id, raw_file, data_file, head_file, nc_file
+
+# USGS flow downloads
+# ------------------------------------------------------------
+def download_usgs_values(main_url, site, time_s, time_e, var, raw_path, dnf):
+    
+    '''Downloads Instananeous or Daily Values data from USGS'''
+    
+    # Construct the download URL
+    url = f'{main_url}?format=rdb&sites={site}&startDT={time_s}&endDT={time_e}&parameterCd={var}&siteStatus=all'
+        
+    # Download the URL to a temporary location
+    urllib.request.urlretrieve(url, raw_path)      
+        
+    # Checks
+    df = pd.read_csv(raw_path, delimiter='\t', comment='#', low_memory=False) # skip comments (#); low_mem prevents mixed datatype warning 
+    if len(df) < 3: # Sites with no data still have a 2-line df. 1st: data format. 2nd: NaNs
+        print(f'No data downloaded for {site}')
+        dnf.append(site)
+    else:
+        print(f'Completed {main_url} for {site}')
+
+    return dnf
+
+# WSC flow downloads
+# ------------------------------------------------------------
+def download_wsc_values(main_url, site, time_s, time_e, var, raw_path, dnf):
+    
+    '''Downloads real-time values from WSC'''
+    
+    # Construct the download URL
+    url = f'{main_url}inline?stations[]={site}&parameters[]={var}&start_date={time_s}%2000:00:00&end_date={time_e}%2023:59:59'
+    
+    # Read the URL into a dataframe
+    tmp = pd.read_csv(url, index_col=[1], parse_dates=True)
+    tmp.to_csv(raw_path)
+    
+    # Checks
+    if len(tmp) == 0: # Sites with no data only have a header, and that doesn't count towards dataframe length
+        print(f'No data downloaded for {site}')
+        dnf.append(site)
+    else:
+        print(f'Completed {site}')
+    
+    return dnf
