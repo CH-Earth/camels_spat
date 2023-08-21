@@ -4,7 +4,7 @@
 # ------------------------------------------------------------------------------------------------------------------------
 def prepare_delineation_outputs(df,i,data_path):
     
-    '''Prepares output folders and file paths for lumped and distributed dilneation outcomes'''
+    '''Prepares output folders and file paths for lumped and distributed delineation outcomes'''
     
     from pathlib import Path
     
