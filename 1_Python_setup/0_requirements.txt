@@ -7,6 +7,7 @@ hs_restclient
 jupyter
 matplotlib
 munch
+netcdf4
 numpy
 openpyxl
 packaging
@@ -15,6 +16,7 @@ py7zr
 pysheds
 requests
 rtree
+seaborn
 shapely
 six
 xarray
