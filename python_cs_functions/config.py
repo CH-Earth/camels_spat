@@ -1,5 +1,7 @@
 '''Contains functions to interact with the configuration file.'''
 
+import os
+
 def my_tester():
     print('Successfully executed test function.')
 
@@ -39,3 +41,12 @@ def read_from_config( file, setting ):
     value = enforce_type(value,type)
     
     return value
+
+def get_total_folder_size(folder_path):
+    '''Finds folder size in bytes'''
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            total_size += os.path.getsize(file_path)    
+    return total_size
