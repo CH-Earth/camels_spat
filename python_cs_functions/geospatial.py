@@ -375,7 +375,7 @@ def compare_forcing_data_and_shape_extents(save_path, nc_file, shp_file, nc_var,
 
 def compare_era5_netcdf_dimensions(surf_file, pres_file):
 
-    '''Opens two netCDF files containing ERA5 data, reads any variables in _vars_ and checks if contents all match'''
+    '''Opens two netCDF files containing ERA5 data and checks if contents of latitude, longitude and time match'''
 
     # Extract space and time info for checks
     with nc4.Dataset(pres_file) as src1, nc4.Dataset(surf_file) as src2: # implicitly closes files
@@ -674,3 +674,143 @@ def derive_mean_wind_speed(file, var_1='u', var_2='v', new_name='w'):
     # 5. Make the variable
     file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, standard_name=standard_name, history=new_history)
     return file
+
+# --- EM-Earth processing
+def compare_em_earth_netcdf_dimensions(p_file, t_file):
+
+    '''Opens two netCDF files containing EM-Earth data and checks if contents of latitude, longitude and time match'''
+
+    # Extract space and time info for checks
+    with nc4.Dataset(p_file) as src1, nc4.Dataset(t_file) as src2: # implicitly closes files
+        p_lat = src1.variables['lat'][:]
+        p_lon = src1.variables['lon'][:]
+        p_time = src1.variables['time'][:]
+        t_lat = src2.variables['lat'][:]
+        t_lon = src2.variables['lon'][:]
+        t_time = src2.variables['time'][:]
+
+    # Perform the check
+    if not all( [all(p_lat == t_lat), all(p_lon == t_lon), all(p_time == t_time)] ):
+        err_txt = (f'ERROR: Dimension mismatch while merging {pressure_file} and {surface_file}. '
+                    'Check latitude, longitude and time dimensions in both files. Continuing with next files.')
+        return False,err_txt
+    else:
+        return True,'Variables match'
+
+def merge_em_earth_prcp_and_tmean_files(p_file, t_file, dest_file):
+
+    '''Merges two EM-Earth data files into dest_file'''
+
+    # Transfer definitions
+    dimensions_t_transfer = ['lon','lat','time']
+    variables_t_transfer = ['tmean']
+    variables_p_transfer = ['prcp']
+    attr_names_expected = ['scale_factor','add_offset','_FillValue','missing_value','units','long_name','standard_name'] # these are the attributes we think each .nc variable has
+    loop_attr_copy_these = ['units','long_name','standard_name'] # we will define new values for _FillValue and missing_value when writing the .nc variables' attributes
+
+    with nc4.Dataset(p_file) as src1, nc4.Dataset(t_file) as src2, nc4.Dataset(dest_file, 'w') as dest: # implicitly closes files
+
+        # Set general attributes
+        dest.setncattr('History','Created ' + time.ctime(time.time()))
+        dest.setncattr('Reason','Merging separate EM-Earth download files')
+        dest.setncattr('Source','github.com/cH-Earth/camels_spat')
+
+        # Copy meta data from the two source files
+        dest.setncattr('Conventions','CF-1.6') # Hopefully - EM-Earth does not specify these
+        dest.setncattr('History_source_file_1',src1.getncattr('history'))
+        dest.setncattr('History_source_file_2',src2.getncattr('history'))
+
+        # --- Dimensions: latitude, longitude, time
+        # Using src2 here because this makes adapting the code from the ERA5 function simpler
+        # If there is a mismatch between surface and pressure we shouldn't have reached this point at all due to the earlier check
+        for name, dimension in src2.dimensions.items():
+
+            # Replace the names to be consistent with ERA5 dimensions - this is better for user friendliness
+            if name.lower() == 'lat': name_new = 'latitude'
+            if name.lower() == 'lon': name_new = 'longitude'
+            if name.lower() == 'time': name_new = 'time' # just to assign 'time' to name_new so we can always use name_new below
+
+            # Create the dimensions
+            if dimension.isunlimited():
+                dest.createDimension( name_new, None)
+            else:
+                dest.createDimension( name_new, len(dimension))
+
+        # --- Get the tmean-file dimension variables (lat, lon, time)
+        for name, variable in src2.variables.items():
+    
+            # Transfer lat, long and time variables because these don't have scaling factors
+            if name in dimensions_t_transfer:
+
+                # Replace the names to be consistent with ERA5 dimensions - this is better for user friendliness
+                if name.lower() == 'lat': name_new = 'latitude'
+                if name.lower() == 'lon': name_new = 'longitude'
+                if name.lower() == 'time': name_new = 'time' # just to assign 'time' to name_new so we can always use name_new below
+
+                new_dims = tuple(
+                    'latitude' if x == 'lat' else 'longitude' if x == 'lon' else x
+                    for x in variable.dimensions
+                    )
+                
+                dest.createVariable(name_new, variable.datatype, new_dims, fill_value = -999)
+                dest[name_new].setncatts(src2[name].__dict__)
+                dest.variables[name_new][:] = src2.variables[name][:]
+
+        # ---  Transfer the tmean-file data first, for no particular reason
+        for name, variable in src2.variables.items():
+
+            # Check that we are only using the names we expect, and thus the names for which we have the required code ready
+            if name in variables_t_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:]
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2. Create the .nc variable 
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+
+        # --- Transfer the pressure level variables next, using the same procedure as above
+        for name, variable in src1.variables.items():
+            if name in variables_p_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:] 
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2a. Create the .nc variable with the proper SUMMA name
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+    
