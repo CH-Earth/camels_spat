@@ -145,8 +145,24 @@ def find_download_coords_from_bounds(coords, target='ERA5'):
         if lon[1] < rounded_lon[1]-0.125:
             rounded_lon[1] -= 0.25
     
-        # Make a download string ready for ERA5 (cdsapi) format
-        dl_string = '{}/{}/{}/{}'.format(rounded_lat[1],rounded_lon[0],rounded_lat[0],rounded_lon[1])
+    if target == 'EM-Earth':
+        
+        # Round to EM-Earth 0.10 degree resolution
+        rounded_lon = [math.floor(lon[0]*20)/20, math.ceil(lon[1]*20)/20]
+        rounded_lat = [math.floor(lat[0]*20)/20, math.ceil(lat[1]*20)/20]
+
+        # Find if we are still in the representative area of a different ERA5 grid cell
+        if lat[0] > rounded_lat[0]+0.05:
+            rounded_lat[0] += 0.10
+        if lon[0] > rounded_lon[0]+0.05:
+            rounded_lon[0] += 0.10
+        if lat[1] < rounded_lat[1]-0.05:
+            rounded_lat[1] -= 0.10
+        if lon[1] < rounded_lon[1]-0.05:
+            rounded_lon[1] -= 0.10
+    
+    # Make a download string ready for ERA5 (cdsapi) format
+    dl_string = '{}/{}/{}/{}'.format(rounded_lat[1],rounded_lon[0],rounded_lat[0],rounded_lon[1])
     
     return dl_string, rounded_lat, rounded_lon
 
