@@ -829,4 +829,44 @@ def merge_em_earth_prcp_and_tmean_files(p_file, t_file, dest_file):
         
                 # 3c. Copy the data SECOND
                 dest[name][:] = loop_val
+
+def update_em_earth_units(file):
     
+    '''Updates units in existing EM_Earth netcdf files'''
+    
+    with nc4.Dataset(file, 'r+') as f:
+        update_em_earth_p(f)
+        update_em_earth_t(f)
+
+def update_em_earth_t(file, temperature='tmean'):
+    
+    '''Updates temperature units from [degree C] to [K]'''
+    
+    var = file.variables[temperature]
+    var[:] = var[:] + 273.15 # [C] + 273.15 = [K]
+    var.setncattr('units', 'K')
+    
+    new_history = f' On {time.ctime(time.time())}: update_em_earth_t().'
+    if 'History' in file.ncattrs():
+        current_history = file.getncattr('History')
+        new_history = f'{current_history}{new_history}'
+    file.setncattr('History', new_history)
+    
+    return file
+
+def update_em_earth_p(file, precipitation='prcp'):
+    
+    '''Updates precipitation units from [mm hr-1] to [kg m-2 s-1]'''
+    
+    var = file.variables[precipitation]
+    var[:] = var[:] / 3600 # (x) [mm hr-1] * (0.001) [m mm-1] * (1000) [kg m-3] * (1/3600) [s hr-1] = [kg m-2 s-1]
+    var.setncattr('units', 'kg m**-2 s**-1')
+    
+    new_history = f' On {time.ctime(time.time())}: update_em_earth_p().'
+    if 'History' in file.ncattrs():
+        current_history = file.getncattr('History')
+        new_history = f'{current_history}{new_history}'
+    file.setncattr('History', new_history)
+    
+    return file
+
