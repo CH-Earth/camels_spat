@@ -1,5 +1,6 @@
 cdsapi
 cligj
+easymore
 fiona
 gdal
 geopandas
@@ -13,6 +14,7 @@ openpyxl
 packaging
 pandas
 py7zr
+pyshp
 pysheds
 requests
 rtree

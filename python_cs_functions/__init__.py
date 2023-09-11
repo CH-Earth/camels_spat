@@ -6,3 +6,4 @@ from python_cs_functions.delineate import *
 from python_cs_functions.reference_shapes import *
 from python_cs_functions.time_processing import *
 from python_cs_functions.geospatial import *
+from python_cs_functions.remapping import *
