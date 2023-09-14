@@ -5,7 +5,18 @@ import geopandas as gpd
 import netCDF4 as nc4
 from pathlib import Path
 import shapefile # this is installed as "PyShp" library
+import sys
 import xarray as xr
+
+def check_remap_need(file, lat_var='latitude', lon_var='longitude'):
+    
+    '''Opens a netcdf file and checks if latitude and longitude dimensions are larger than 1'''
+    
+    ds = xr.open_dataset(file)
+    needs_remap = False
+    if (len(ds[lat_var]) > 1) or (len(ds[lon_var]) > 1): 
+        needs_remap = True
+    return needs_remap
 
 def run_easymore_to_make_remap_file(nc_files,esmr_objects):
 
@@ -120,10 +131,22 @@ def make_forcing_grid_shapefile(infile, outfile, ndec=4):
     with nc4.Dataset(infile, 'r') as src:
         lat = src.variables['latitude'][:]
         lon = src.variables['longitude'][:]
-
+        
     # Find the spacing - round to a few decimals so we don't get issues with float precision
-    half_dlat = round(abs(lat[1] - lat[0])/2, ndec)
-    half_dlon = round(abs(lon[1] - lon[0])/2, ndec)
+    if len(lat) == 1 and len(lon) == 1:
+        # Special case: 1x1 grid cell in forcing file
+        if 'ERA5' in str(infile):
+            half_dlat = 0.25/2
+            half_dlon = 0.25/2
+        elif 'EM_Earth' in str(infile):
+            half_dlat = 0.10/2
+            half_dlon = 0.10/2
+    elif (len(lat) == 1) != (len(lon) == 1):
+        print(' WARNING: make_forcing_grid_shapefile(): special case of 1-by-X or X-by-1 forcing grid not implemented yet. Exiting.')
+        sys.exit(0)
+    else:
+        half_dlat = round(abs(lat[1] - lat[0])/2, ndec)
+        half_dlon = round(abs(lon[1] - lon[0])/2, ndec)
 
     # create a new shapefile object
     with shapefile.Writer(str(outfile)) as w:
