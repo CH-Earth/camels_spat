@@ -18,7 +18,7 @@ def check_can_remap_as_is(file, lat_var='latitude', lon_var='longitude'):
     
     ds = xr.open_dataset(file)
     can_remap = False
-    if (len(ds[lat_var]) > 1) and (len(ds[lon_var]) > 1): 
+    if (len(ds[lat_var]) > 2) and (len(ds[lon_var]) > 2):
         can_remap = True
     return can_remap
 
