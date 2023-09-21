@@ -2,8 +2,14 @@
 import cdsapi
 from datetime import datetime, timedelta
 import geopandas as gpd
+import netCDF4 as nc4
+import numpy as np
 import math
 import os
+import time
+import xarray as xr
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 # --- Folder setup ---
 def prepare_forcing_outputs(df,i,data_path):
@@ -139,8 +145,24 @@ def find_download_coords_from_bounds(coords, target='ERA5'):
         if lon[1] < rounded_lon[1]-0.125:
             rounded_lon[1] -= 0.25
     
-        # Make a download string ready for ERA5 (cdsapi) format
-        dl_string = '{}/{}/{}/{}'.format(rounded_lat[1],rounded_lon[0],rounded_lat[0],rounded_lon[1])
+    if target == 'EM-Earth':
+        
+        # Round to EM-Earth 0.10 degree resolution
+        rounded_lon = [math.floor(lon[0]*20)/20, math.ceil(lon[1]*20)/20]
+        rounded_lat = [math.floor(lat[0]*20)/20, math.ceil(lat[1]*20)/20]
+
+        # Find if we are still in the representative area of a different ERA5 grid cell
+        if lat[0] > rounded_lat[0]+0.05:
+            rounded_lat[0] += 0.10
+        if lon[0] > rounded_lon[0]+0.05:
+            rounded_lon[0] += 0.10
+        if lat[1] < rounded_lat[1]-0.05:
+            rounded_lat[1] -= 0.10
+        if lon[1] < rounded_lon[1]-0.05:
+            rounded_lon[1] -= 0.10
+    
+    # Make a download string ready for ERA5 (cdsapi) format
+    dl_string = '{}/{}/{}/{}'.format(rounded_lat[1],rounded_lon[0],rounded_lat[0],rounded_lon[1])
     
     return dl_string, rounded_lat, rounded_lon
 
@@ -305,4 +327,546 @@ def convert_start_and_end_dates_to_era5_download_lists(start,end):
         cur = cur + timedelta(days=1)
         
     return start_l,end_l
+
+# --- ERA5 processing ---
+def extract_ERA5_subset(infile, outfile, coords):
+    
+    '''Subsets an existing ERA5 forcing file by coordinates "latmax / lonmin / latmin / lonmax"'''
+
+    # Source: https://github.com/CH-Earth/CWARHM/blob/main/0_tools/ERA5_subset_forcing_file_by_lat_lon.py
+
+    # Notes:
+    # 1. Works for North American continent
+    # 2. Works for two specific ERA5 file layouts
+
+    # Assumptions
+    # 1. Latitude = [-90,90]
+    # 2. Longitude = [-180,180]
+    
+    # Split coordinates
+    coords = coords.split('/') # split string
+    coords = [float(value) for value in coords] # string to array
+    latmax = coords[0]
+    lonmin = coords[1]
+    latmin = coords[2]
+    lonmax = coords[3]
+    
+    with xr.open_dataset(infile) as ds:
+
+        # Handle specific cases
+        if (ds['longitude'] > 180).any(): # convert ds longitude form 0/360 to -180/180
+            lon = ds['longitude'].values
+            lon[lon > 180] = lon[lon > 180] - 360
+            ds['longitude'] = lon
+        
+        if (ds['latitude'] > 90).any(): # convert ds longitude form 0/180 to -90/90
+            lat = ds['latitude'].values
+            lat[lat > 90] = lat[lat > 90] - 180
+            ds['latitue'] = lat
+
+        # Subset
+        ds_sub = ds.sel(latitude = slice(latmax, latmin), longitude = slice(lonmin, lonmax))
+        ds_sub.to_netcdf(outfile)
+        ds_sub.close()
+
+def compare_forcing_data_and_shape_extents(save_path, nc_file, shp_file, nc_var, nc_time=0):
+
+    '''Plots forcing grid and shapefile on top of each other'''
+
+    catchment = gpd.read_file(shp_file)
+    with xr.open_dataset(nc_file) as forcing:
+        ax = plt.subplot()   
+        if (len(forcing['latitude']) == 1) or (len(forcing['longitude']) == 1):
+            # Case 1: in at least one direction, ERA5 file covers only a single grid cell. Needs special plotting attention
+            lon = forcing['longitude'].values
+            lat = forcing['latitude'].values
+            grid = Rectangle( (lon.min()-0.125,lat.min()-0.125), lon.max()-lon.min()+0.25, lat.max()-lat.min()+0.25 )
+            ax.add_patch(grid)
+        else:
+            # Case 2: more then a single ERA5 cell in either direction
+            forcing[nc_var].isel(time=nc_time).plot(ax=ax,cbar_kwargs={'shrink': 0.95})
+        catchment.plot(color='None', edgecolor='k', ax=ax);
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+
+def compare_era5_netcdf_dimensions(surf_file, pres_file):
+
+    '''Opens two netCDF files containing ERA5 data and checks if contents of latitude, longitude and time match'''
+
+    # Extract space and time info for checks
+    with nc4.Dataset(pres_file) as src1, nc4.Dataset(surf_file) as src2: # implicitly closes files
+        pres_lat = src1.variables['latitude'][:]
+        pres_lon = src1.variables['longitude'][:]
+        pres_time = src1.variables['time'][:]
+        surf_lat = src2.variables['latitude'][:]
+        surf_lon = src2.variables['longitude'][:]
+        surf_time = src2.variables['time'][:]
+
+     # Update the pressure level coordinates
+    pres_lat[pres_lat > 90] = pres_lat[pres_lat > 90] - 180
+    pres_lon[pres_lon > 180] = pres_lon[pres_lon > 180] - 360
+
+    # Perform the check
+    if not all( [all(pres_lat == surf_lat), all(pres_lon == surf_lon), all(pres_time == surf_time)] ):
+        err_txt = (f'ERROR: Dimension mismatch while merging {pressure_file} and {surface_file}. '
+                    'Check latitude, longitude and time dimensions in both files. Continuing with next files.')
+        return False,err_txt
+    else:
+        return True,'Variables match'
+
+def merge_era5_surface_and_pressure_files(surf_file, pres_file, dest_file):
+
+    '''Merges two ERA5 data files into dest_file'''
+
+    # Transfer definitions
+    dimensions_surf_transfer = ['longitude','latitude','time']
+    variables_surf_transfer = ['msdwlwrf','msnlwrf','msdwswrf','msnswrf','mtpr','sp','mper']
+    variables_pres_transfer = ['t','q','u','v']
+    attr_names_expected = ['scale_factor','add_offset','_FillValue','missing_value','units','long_name','standard_name'] # these are the attributes we think each .nc variable has             
+    loop_attr_copy_these = ['units','long_name','standard_name'] # we will define new values for _FillValue and missing_value when writing the .nc variables' attributes
+
+    with nc4.Dataset(pres_file) as src1, nc4.Dataset(surf_file) as src2, nc4.Dataset(dest_file, 'w') as dest: # implicitly closes files
+
+        # Set general attributes
+        dest.setncattr('History','Created ' + time.ctime(time.time()))
+        dest.setncattr('Reason','Merging separate ERA5 download files')
+        dest.setncattr('Source','github.com/cH-Earth/camels_spat')
+
+        # Copy meta data from the two source files
+        if src1.getncattr('Conventions') == 'CF-1.6' and src2.getncattr('Conventions') == 'CF-1.6':
+            dest.setncattr('Conventions','CF-1.6')
+        dest.setncattr('History_source_file_1',src1.getncattr('history'))
+        dest.setncattr('History_source_file_2',src2.getncattr('history'))
+
+        # --- Dimensions: latitude, longitude, time
+        # NOTE: we can use the lat/lon from the surface file (src2), because those are already in proper units. 
+        # If there is a mismatch between surface and pressure we shouldn't have reached this point at all due to the earlier check
+        for name, dimension in src2.dimensions.items():
+            if dimension.isunlimited():
+                dest.createDimension( name, None)
+            else:
+                dest.createDimension( name, len(dimension))
+
+        # --- Get the surface level dimension variables (lat, lon, time)
+        for name, variable in src2.variables.items():
+    
+            # Transfer lat, long and time variables because these don't have scaling factors
+            if name in dimensions_surf_transfer:
+                dest.createVariable(name, variable.datatype, variable.dimensions, fill_value = -999)
+                dest[name].setncatts(src1[name].__dict__)
+                dest.variables[name][:] = src2.variables[name][:]
+
+        # ---  Transfer the surface level data first, for no particular reason
+        # This should contain surface pressure (sp), downward longwave (msdwlwrf), downward shortwave (msdwswrf) and precipitation (mtpr)
+        for name, variable in src2.variables.items():
+
+            # Check that we are only using the names we expect, and thus the names for which we have the required code ready
+            if name in variables_surf_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:]
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2. Create the .nc variable 
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+
+        # --- Transfer the pressure level variables next, using the same procedure as above
+        for name, variable in src1.variables.items():
+            if name in variables_pres_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:] 
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2a. Create the .nc variable with the proper SUMMA name
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+
+# --- ERA5 derived variables
+def add_derived_variables(file):
+    
+    '''Adds various derived meteorological variables to a netCDF file with existing ERA5 forcing data'''
+
+    with nc4.Dataset(file, 'r+') as f:
+        f = derive_reflected_shortwave_radiation(f)
+        f = derive_net_radiation(f)
+        f = derive_vapor_pressure(f)
+        f = derive_relative_humidity(f)
+        f = derive_mean_wind_speed(f)
+
+def make_nc_variable(file, name, units, values, long_name='', standard_name='', history=''):
+
+    '''Makes a netcdf4 variable with dimensions (time,latitude,longitude) in file'''
+
+    # Assumptions
+    # - Dimension in input file are 'time', 'latitude', 'longitude'
+    # - No fill value specified
+    # - Compression options zlib=True, shuffle=True are active
+
+    # 1. Create the .nc variable 
+    file.createVariable(name,'f4',('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+
+    # 2. Set the attributes FIRST, so we don't run into any scaling/offset issues
+    file[name].setncattr('missing_value',-999)
+    file[name].setncattr('units',units)
+    if long_name: file[name].setncattr('long_name',long_name)
+    if standard_name: file[name].setncattr('standard_name', standard_name)
+
+    # 3. Copy the data SECOND
+    file[name][:] = values
+
+    # 4. Update history
+    if history:
+        current_history = file.getncattr('History')
+        new_history = f'{current_history}{history}'
+        file.setncattr('History', new_history)
+    
+    return file
+
+def derive_reflected_shortwave_radiation(file, incoming_shortwave='msdwswrf', net_shortwave='msnswrf', new_name='reflected_sw'):
+
+    '''Adds reflected shortwave radiation to a netCDF4 file that cantains incoming and net shortwave radiation'''
+
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    ds = file.variables[incoming_shortwave][:]
+    ns = file.variables[net_shortwave][:]
+
+    # 2. Compute the values 
+    values_new = ds - ns
+    
+    # 3. Define other inputs
+    unit_new = 'W m**-2'
+    long_name = 'Mean surface reflected shortwave radiation flux, computed from ERA5 mean surface downward short-wave radiation flux and mean surface net short-wave radiation flux'
+    new_history = f' On {time.ctime(time.time())}: derive_reflected_shortwave_radiation().'
+
+    # 4. Make the variable
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
+    
+    return file
+
+def derive_net_radiation(file, net_shortwave='msnswrf', net_longwave='msnlwrf', new_name='net_radiation'):
+
+    '''Adds net radiation to a netCDF4 file that contains net shortwave and net longwave radiation'''
+
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    ns = file.variables[net_shortwave][:]
+    nl = file.variables[net_longwave][:]
+
+    # 2. Compute the values 
+    values_new = ns + nl
+    
+    # 3. Define other inputs
+    unit_new = 'W m**-2'
+    long_name = 'Mean surface net radiation flux, computed from ERA5 mean surface net short-wave radiation flux and mean surface net long-wave radiation flux'
+    new_history = f' On {time.ctime(time.time())}: derive_net_radiation().'
+
+    # 4. Make the variable
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
+    
+    return file
+
+def derive_relative_humidity(file, air_temperature='t', vapor_pressure='e', new_name='rh'):
+
+    '''Adds relative humidity to a netCDF4 file containing vapor pressure and air temperature'''
+
+    # 0. Constants
+    Rv = 461 # [J K-1 kg-1]
+    T0 = 273.15 # [K]
+    e0 = 0.6113 # [kPa]
+    Lv = 2.5*10**6 # [J kg-1], latent heat of vaporization for liquid water
+    Ld = 2.83*10**6 # [J kg-1], latent heat of deposition for ice
+
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    e = file.variables[vapor_pressure][:]
+    T = file.variables[air_temperature][:]
+
+    # 2. Compute the values
+    is_ice = T < 273.15
+    is_liq = T >= 273.15    
+    es = T*0 # initialize the variable
+    es[is_ice] = e0*np.exp(Ld/Rv * (1/T0 - 1/T[is_ice]))
+    es[is_liq] = e0*np.exp(Lv/Rv * (1/T0 - 1/T[is_liq]))   
+    values_new = e / es
+    
+    # 3. Define other inputs
+    unit_new = 'kPa kPa**-1'
+    long_name = 'relative humidity, computed from ERA5 temperature and derived vapor pressure'
+    new_history = f' On {time.ctime(time.time())}: derive_relative_humidity().'
+
+    # 4. Make the variable
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
+    return file
+
+def derive_vapor_pressure(file, air_pressure='sp', specific_humidity='q', Pa_to_kPa=True, new_name='e', approximate=False):
+
+    '''Adds vapor pressure to a netCDF4 file containing air pressure and specific humidity'''
+
+    # Assumptions:
+    # - New variable's attribute values are hard-coded
+    
+    # 0. Constants
+    Rd = 2.871*10**(-4) # [kPa K-1 m3 kg-1]
+    Rv = 4.61*10**(-4) # [kPa K-1 m3 kg-1]
+    epsilon = Rd/Rv # Should be ~ 0.622
+    
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    P = file.variables[air_pressure][:]
+    q = file.variables[specific_humidity][:]
+
+    # 2. Convert air pressure units if flagged
+    if Pa_to_kPa: P = P / 1000
+
+    # 3. Compute the values
+    values_new = -1*(q*P)/(q*epsilon - q - epsilon)
+    if approximate: values_new = q*P/(epsilon)
+
+    # 4. Define other inputs
+    unit_new = 'kPa'
+    long_name = 'vapor pressure, computed from ERA5 specific humidity and surface pressure'
+    new_history = f' On {time.ctime(time.time())}: derive_vapor_pressure().'
+
+    # 5. Make the variable
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
+    return file
+
+def derive_mean_wind_speed(file, var_1='u', var_2='v', new_name='w'):
+    
+    '''Adds mean wind speed to a netCDF4 file containing U and V wind direction data'''
+
+    # Assumptions:
+    # - New variable's attribute values are hard-coded
+    
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    values_1 = file.variables[var_1][:]
+    values_2 = file.variables[var_2][:]
+
+    # 2. Create the variable attribute 'units' from the source data. This lets us check if the source units match (they should match)
+    unit_1 = file.variables[var_1].getncattr('units')
+    unit_2 = file.variables[var_2].getncattr('units')
+    assert unit_1 == unit_2, f'WARNING: units of source variables do not match: variable {var1} in {unit_1}, varialbe {var_2} in {unit_2}'
+    unit_new = '(({})**2 + ({})**2)**0.5'.format(unit_1,unit_2)
+
+    # 3. Compute the values
+    values_new = ((values_1**2)+(values_2**2))**0.5
+    
+    # 4. Define other inputs
+    long_name = 'mean wind speed at the measurement height, computed from ERA5 U and V component of wind'
+    standard_name = 'wind_speed'
+    new_history = f'. On {time.ctime(time.time())}: derive_mean_wind_speed().'
+
+    # 5. Make the variable
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, standard_name=standard_name, history=new_history)
+    return file
+
+# --- EM-Earth processing
+def compare_em_earth_netcdf_dimensions(p_file, t_file):
+
+    '''Opens two netCDF files containing EM-Earth data and checks if contents of latitude, longitude and time match'''
+
+    # Extract space and time info for checks
+    with nc4.Dataset(p_file) as src1, nc4.Dataset(t_file) as src2: # implicitly closes files
+        p_lat = src1.variables['lat'][:]
+        p_lon = src1.variables['lon'][:]
+        p_time = src1.variables['time'][:]
+        t_lat = src2.variables['lat'][:]
+        t_lon = src2.variables['lon'][:]
+        t_time = src2.variables['time'][:]
+
+    # Perform the check
+    if not all( [all(p_lat == t_lat), all(p_lon == t_lon), all(p_time == t_time)] ):
+        err_txt = (f'ERROR: Dimension mismatch while merging {pressure_file} and {surface_file}. '
+                    'Check latitude, longitude and time dimensions in both files. Continuing with next files.')
+        return False,err_txt
+    else:
+        return True,'Variables match'
+
+def merge_em_earth_prcp_and_tmean_files(p_file, t_file, dest_file):
+
+    '''Merges two EM-Earth data files into dest_file'''
+
+    # Transfer definitions
+    dimensions_t_transfer = ['lon','lat','time']
+    variables_t_transfer = ['tmean']
+    variables_p_transfer = ['prcp']
+    attr_names_expected = ['scale_factor','add_offset','_FillValue','missing_value','units','long_name','standard_name'] # these are the attributes we think each .nc variable has
+    loop_attr_copy_these = ['units','long_name','standard_name'] # we will define new values for _FillValue and missing_value when writing the .nc variables' attributes
+
+    with nc4.Dataset(p_file) as src1, nc4.Dataset(t_file) as src2, nc4.Dataset(dest_file, 'w') as dest: # implicitly closes files
+
+        # Set general attributes
+        dest.setncattr('History','Created ' + time.ctime(time.time()))
+        dest.setncattr('Reason','Merging separate EM-Earth download files')
+        dest.setncattr('Source','github.com/cH-Earth/camels_spat')
+
+        # Copy meta data from the two source files
+        dest.setncattr('Conventions','CF-1.6') # Hopefully - EM-Earth does not specify these
+        dest.setncattr('History_source_file_1',src1.getncattr('history'))
+        dest.setncattr('History_source_file_2',src2.getncattr('history'))
+
+        # --- Dimensions: latitude, longitude, time
+        # Using src2 here because this makes adapting the code from the ERA5 function simpler
+        # If there is a mismatch between surface and pressure we shouldn't have reached this point at all due to the earlier check
+        for name, dimension in src2.dimensions.items():
+
+            # Replace the names to be consistent with ERA5 dimensions - this is better for user friendliness
+            if name.lower() == 'lat': name_new = 'latitude'
+            if name.lower() == 'lon': name_new = 'longitude'
+            if name.lower() == 'time': name_new = 'time' # just to assign 'time' to name_new so we can always use name_new below
+
+            # Create the dimensions
+            if dimension.isunlimited():
+                dest.createDimension( name_new, None)
+            else:
+                dest.createDimension( name_new, len(dimension))
+
+        # --- Get the tmean-file dimension variables (lat, lon, time)
+        for name, variable in src2.variables.items():
+    
+            # Transfer lat, long and time variables because these don't have scaling factors
+            if name in dimensions_t_transfer:
+
+                # Replace the names to be consistent with ERA5 dimensions - this is better for user friendliness
+                if name.lower() == 'lat': name_new = 'latitude'
+                if name.lower() == 'lon': name_new = 'longitude'
+                if name.lower() == 'time': name_new = 'time' # just to assign 'time' to name_new so we can always use name_new below
+
+                new_dims = tuple(
+                    'latitude' if x == 'lat' else 'longitude' if x == 'lon' else x
+                    for x in variable.dimensions
+                    )
+                
+                dest.createVariable(name_new, variable.datatype, new_dims, fill_value = -999)
+                dest[name_new].setncatts(src2[name].__dict__)
+                dest.variables[name_new][:] = src2.variables[name][:]
+
+        # ---  Transfer the tmean-file data first, for no particular reason
+        for name, variable in src2.variables.items():
+
+            # Check that we are only using the names we expect, and thus the names for which we have the required code ready
+            if name in variables_t_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:]
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2. Create the .nc variable 
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+
+        # --- Transfer the pressure level variables next, using the same procedure as above
+        for name, variable in src1.variables.items():
+            if name in variables_p_transfer:
+        
+                # 0. Reset the dictionary that we keep attribute values in
+                loop_attr_source_values = {name: 'n/a' for name in attr_names_expected}
+        
+                # 1a. Get the values of this variable from the source (this automatically applies scaling and offset)
+                loop_val = variable[:] 
+        
+                # 1b. Get the attributes for this variable from source
+                for attrname in variable.ncattrs():
+                    loop_attr_source_values[attrname] = variable.getncattr(attrname)
+               
+                # 2a. Create the .nc variable with the proper SUMMA name
+                # Inputs: variable name as needed by SUMMA; data type: 'float'; dimensions; no need for fill value, because thevariable gets populated in this same script
+                dest.createVariable(name, 'f4', ('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+        
+                # 3a. Select the attributes we want to copy for this variable, based on the dictionary defined before the loop starts
+                loop_attr_copy_values = {use_this: loop_attr_source_values[use_this] for use_this in loop_attr_copy_these}
+        
+                # 3b. Copy the attributes FIRST, so we don't run into any scaling/offset issues
+                dest[name].setncattr('missing_value',-999)
+                dest[name].setncatts(loop_attr_copy_values)
+        
+                # 3c. Copy the data SECOND
+                dest[name][:] = loop_val
+
+def update_em_earth_units(file):
+    
+    '''Updates units in existing EM_Earth netcdf files'''
+    
+    with nc4.Dataset(file, 'r+') as f:
+        update_em_earth_p(f)
+        update_em_earth_t(f)
+
+def update_em_earth_t(file, temperature='tmean'):
+    
+    '''Updates temperature units from [degree C] to [K]'''
+    
+    var = file.variables[temperature]
+    var[:] = var[:] + 273.15 # [C] + 273.15 = [K]
+    var.setncattr('units', 'K')
+    
+    new_history = f' On {time.ctime(time.time())}: update_em_earth_t().'
+    if 'History' in file.ncattrs():
+        current_history = file.getncattr('History')
+        new_history = f'{current_history}{new_history}'
+    file.setncattr('History', new_history)
+    
+    return file
+
+def update_em_earth_p(file, precipitation='prcp'):
+    
+    '''Updates precipitation units from [mm hr-1] to [kg m-2 s-1]'''
+    
+    var = file.variables[precipitation]
+    var[:] = var[:] / 3600 # (x) [mm hr-1] * (0.001) [m mm-1] * (1000) [kg m-3] * (1/3600) [s hr-1] = [kg m-2 s-1]
+    var.setncattr('units', 'kg m**-2 s**-1')
+    
+    new_history = f' On {time.ctime(time.time())}: update_em_earth_p().'
+    if 'History' in file.ncattrs():
+        current_history = file.getncattr('History')
+        new_history = f'{current_history}{new_history}'
+    file.setncattr('History', new_history)
+    
+    return file
 
