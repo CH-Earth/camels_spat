@@ -247,6 +247,18 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
         # Make the new coordinates
         new_lat = np.linspace(min(old_lat) - grid_spacing, max(old_lat) + grid_spacing, grids_lat)
         new_lon = np.linspace(min(old_lon) - grid_spacing, max(old_lon) + grid_spacing, grids_lon)
+        
+        # Workaround - 
+        # With the code above (np.linspace), we sometimes get floating point errors (i.e., longitude might be 
+        # -66.55000000001 rather than the -66.55 we expect. This leads to issues below, where we want to match
+        # time, lat and lon coordinates in the old DataSet (ds) with those in the new DataSet (new_ds), where
+        # ds contains the "exact" values and new_ds the ones with floating point errors. The rounding below
+        # (hopefully) ensures that we get the "exact" values in new_ds so the matching works, but this is likely
+        # quite brittle. Don't rely on it too much.
+        # Discovered this while running the code without the rounding. It seems to work as expected in most/sometimes
+        # cases, but in some others we run into this floating point error. No idea what makes these cases different. 
+        new_lat = np.round(new_lat, 2)
+        new_lon = np.round(new_lon, 2)
    
         # Create a grid_cells-by-grid_cells-by-time set of NaNs
         new_data = np.empty( (len(ds[tim_dim]), grids_lat, grids_lon) ) # Note that dim order must match what's used below
