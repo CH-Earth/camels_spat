@@ -55,6 +55,8 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
     esmr.save_csv  = False # Flag that we do not want the data stored in .csv in addition to .nc
     esmr.remap_csv = '' # Initialize with 'no remap file available' - we'll update this later
     esmr.sort_ID = False # Enforce that we want our HRUs returned in the order we put them in
+    esmr.overwrite_remapped_nc = True # Ensures we pick up where we left after interrupts
+    esmr.complevel = 9 # Highest compression level
 
     # Folders
     esmr.temp_dir = str(temp_folder) + '/' # Path() to string; ensure the trailing '/' EASYMORE wants
@@ -245,8 +247,8 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
         grids_lon = len(old_lon) + 2
 
         # Make the new coordinates
-        new_lat = np.linspace(min(old_lat) - grid_spacing, max(old_lat) + grid_spacing, grids_lat)
-        new_lon = np.linspace(min(old_lon) - grid_spacing, max(old_lon) + grid_spacing, grids_lon)
+        new_lat = np.round( np.linspace(min(old_lat) - grid_spacing, max(old_lat) + grid_spacing, grids_lat), 2)
+        new_lon = np.round( np.linspace(min(old_lon) - grid_spacing, max(old_lon) + grid_spacing, grids_lon), 2)
    
         # Create a grid_cells-by-grid_cells-by-time set of NaNs
         new_data = np.empty( (len(ds[tim_dim]), grids_lat, grids_lon) ) # Note that dim order must match what's used below
