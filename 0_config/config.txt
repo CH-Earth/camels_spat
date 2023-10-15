@@ -73,3 +73,5 @@ dem_path             | dem_merit                                                
 dem_url              | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/elv_{}{}.tar | string  # Download URL for Merit Hydro Adjusted Elevations
 soil_path            | soil_soilgrids                                                                   | string  # Folder for soil downloads
 soil_url             | https://files.isric.org/soilgrids/latest/data/                                   | string  # Download URL for soilgrids files
+lake_path            | hydrolakes                                                                       | string  # Folder for hydrolakes downloads
+lake_url             | https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip         | string  # Download URL for soilgrids files
