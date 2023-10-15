@@ -62,3 +62,14 @@ wsc_start_t     | 2021-06-01               | string  # Start time for WSC data d
 wsc_start_e     | 2023-01-02               | string  # End time for WSC data downloads
 hydat_start_t   | 1950-01-01               | string  # Start time for HYDAT data extraction
 hydat_start_e   | 2023-01-02               | string  # End time for HYDAT data extraction
+
+# 7. Forcing data downloads
+# n/a
+
+# 8. Geospatial data downloads
+geospatial_area      | -179.5,-50,5,85                                                                  | string  # Download coordinates for North American domain [85/-179.5/5/-50]
+geospatial_temp_path | geospatial_temp                                                                  | string  # Path for temporary data storage of geospatial data sets (before subsetting)
+dem_path             | dem_merit                                                                        | string  # Folder for the DEM downloads
+dem_url              | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/elv_{}{}.tar | string  # Download URL for Merit Hydro Adjusted Elevations
+soil_path            | soil_soilgrids                                                                   | string  # Folder for soil downloads
+soil_url             | https://files.isric.org/soilgrids/latest/data/                                   | string  # Download URL for soilgrids files

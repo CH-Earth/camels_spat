@@ -7,10 +7,16 @@ import pandas as pd
 import urllib.request
 from pathlib import Path
 
-def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}):
+def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}, overwrite=False):
     
     # Extract the filename from the URL
     file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters
+    
+    # Early exit
+    if Path(folder/file_name).is_file():
+        if not overwrite:
+            print(f'File {folder/file_name} exists and download_url_into_folder() argument overwrite is False. Skipping file.')
+            return
     
     # Make sure the connection is re-tried if it fails
     retries_cur = 1
