@@ -7,6 +7,11 @@ from osgeo import gdal
 import requests
 from urllib.parse import urljoin
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path().absolute().parent))
+import python_cs_functions as cs
+
 # --- General
 def geospatial_coordinates_to_download_coordinates(coords, product):
 
