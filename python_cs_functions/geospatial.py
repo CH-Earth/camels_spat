@@ -3,6 +3,7 @@
 from bs4 import BeautifulSoup
 import glob
 import numpy as np
+import os
 from osgeo import gdal
 import requests
 from urllib.parse import urljoin
@@ -44,7 +45,22 @@ def geospatial_coordinates_to_download_coordinates(coords, product):
 
         # Return in format that's good to go for downloading (tuple)
         out = [coords[0], coords[3], coords[1], coords[2]]
-        
+    
+    elif product.lower() == 'glclu2019':
+
+        # Download edge values
+        lon_left_edge   = np.arange(-180,180,10) # = array([-180,-170,..,160,170])
+        lat_top_edge = np.arange(-50,90,10) # NOTE: latitudes (-90 to -50) and > 80N are NOT part of the GLCLU2019 domain
+
+        # Indices if closest lowest
+        lon_min_i = np.where(lon_left_edge <= domain_min_lon)[0]
+        lon_max_i = np.where(lon_left_edge <= domain_max_lon)[0]
+        lat_min_i = np.where(lat_top_edge <= domain_min_lat)[0]
+        lat_max_i = np.where(lat_top_edge <= domain_max_lat)[0]
+
+        # Convert to coordinate output (string)
+        out = f'{lon_left_edge[lon_min_i[-1]]},{lon_left_edge[lon_max_i[-1]]},{lat_bottom_edge[lat_min_i[-1]]},{lat_bottom_edge[lat_max_i[-1]]}'
+    
     else:
         print(f'WARNING: geospatial_coordinates_to_download_coordinates(): no code found to process {product}. Returning input as output.')
         out = coords
@@ -169,5 +185,101 @@ def download_all_soilgrids_tiles_into_folder(url, dest):
     dest.mkdir(parents=True, exist_ok=True) # Ensure the destination exists
     for file in online_files:
         cs.download_url_into_folder(file,dest)
+    
+    return
+
+# --- Global Land Class Land Use 2019 data
+def convert_coordinates_to_glclu2019_download_lists(coords):
+    
+    '''Converts [coords] as (lon_min,lon_max,lat_min,lat_max) to lists that 
+       can be used to download various Global Land Cover Land Use 2019 files for that area.'''
+
+    # Convert area string into list
+    coords = coords.split(',')
+
+    # Store coordinates as floats in individual variables
+    domain_min_lon = np.array(float(coords[0]))
+    domain_max_lon = np.array(float(coords[1]))
+    domain_min_lat = np.array(float(coords[2]))
+    domain_max_lat = np.array(float(coords[3]))
+    
+    # Define the edges of the download areas
+    lon_right_edge  = np.arange(-170,190,10) # = array([-170,-160,..,170,180])
+    lon_left_edge   = np.arange(-180,180,10) # = array([-180,-170,..,160,170])
+    lat_bottom_edge = np.arange(-50,80,10) # lat < 50S and > 80N are not part of the domain
+    lat_top_edge    = np.arange(-40,90,10) 
+    
+    # Define the download variables
+    lon_list = []
+    for item in lon_left_edge:
+        if item < 0:
+            lon_list.append(f'{np.abs(item):03d}W')
+        else:
+            lon_list.append(f'{item:03d}E')
+    lat_list = []
+    for item in lat_top_edge:
+        if item < 0:
+            lat_list.append(f'{np.abs(item):02d}S')
+        else:
+            lat_list.append(f'{item:02d}N')
+    
+    dl_lon_all = np.array(lon_list)
+    dl_lat_all = np.array(lat_list)
+   
+    # Find the upper-left corners of each download square
+    dl_lons = dl_lon_all[(domain_min_lon < lon_right_edge) & (domain_max_lon >= lon_left_edge)]
+    dl_lats = dl_lat_all[(domain_min_lat < lat_top_edge) & (domain_max_lat >= lat_bottom_edge)]
+
+    return dl_lons,dl_lats
+
+def download_glclu2019_grid(url, dest_folder, retries_max=10):
+    
+    # Extract the filename from the URL
+    file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters
+    
+    # Check if file already exists in destination
+    if os.path.isfile(dest_folder / file_name):
+        print('WARNING: download_glclu2019_grid: file {} already exists. Aborting download.'.format(dest_folder/file_name))
+        return
+        
+    # Check if there is data for this specific location
+    if not url_file_exists(url):
+        print('WARNING: download_glclu2019_grid: Global Land Cover Land Use data does not contain data for {}. Aborting download.'.format(file_name))
+        return
+        
+    # Download the file
+    cs.download_url_into_folder(url,dest_folder)
+    
+    return
+
+def url_file_exists(url):
+    response = requests.head(url)
+    return response.status_code == 200
+
+def merge_glclu2019_files_into_one(merged_file, src_folder, des_folder, download_area):
+
+    # Find the file names
+    all_files = []
+    for dir_path, dir_names, file_names in os.walk(src_folder):
+        for file_name in file_names:
+            if file_name.endswith('.tif'): # ensure we don't accidentally get .aux files from QGIS or something similar
+                all_files.append(os.path.join(dir_path,file_name))
+
+    # Ensure destination exists
+    des_folder.mkdir(parents=True, exist_ok=True)
+
+    # Convert subsetting area into a usable GDAL setting
+    # subset_area = [lon_min, lon_max, lat_min, lat_max]
+    # GDAL window = [ulx, uly, lrx, lry]; [upper left x, upper left y, lower right x, lower right y]
+    # Mapping:
+    #   ulx = lon_min = subset_area[0]
+    #   uly = lat_max = subset_area[3]
+    #   lrx = lon_max = subset_area[1]
+    #   lry = lat_min = subset_area[2]
+    subset_coor = download_area.split(',')
+    window = [subset_coor[0], subset_coor[3], subset_coor[1], subset_coor[2]]
+
+    # Merge into area of interest
+    cs.merge_merit_downloads_into_area_of_interest(all_files, str(des_folder/merged_file), window) # originally built for MERIT, should work here too
     
     return
