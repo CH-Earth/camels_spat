@@ -1,0 +1,6 @@
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/average_soil_and_sedimentary-deposit_thickness.tif
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/hill-slope_valley-bottom.tif
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/land_cover_mask.tif
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/upland_hill-slope_regolith_thickness.tif
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/upland_hill-slope_soil_thickness.tif
+https://daac.ornl.gov/daacdata/global_soil/Global_Soil_Regolith_Sediment/data/upland_valley-bottom_and_lowland_sedimentary_deposit_thickness.tif

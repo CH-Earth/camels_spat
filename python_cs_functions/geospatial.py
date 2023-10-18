@@ -50,7 +50,7 @@ def geospatial_coordinates_to_download_coordinates(coords, product):
 
         # Download edge values
         lon_left_edge   = np.arange(-180,180,10) # = array([-180,-170,..,160,170])
-        lat_top_edge = np.arange(-50,90,10) # NOTE: latitudes (-90 to -50) and > 80N are NOT part of the GLCLU2019 domain
+        lat_top_edge = np.arange(-40,90,10) # NOTE: latitudes (-90 to -50) and > 80N are NOT part of the GLCLU2019 domain
 
         # Indices if closest lowest
         lon_min_i = np.where(lon_left_edge <= domain_min_lon)[0]
@@ -59,7 +59,7 @@ def geospatial_coordinates_to_download_coordinates(coords, product):
         lat_max_i = np.where(lat_top_edge <= domain_max_lat)[0]
 
         # Convert to coordinate output (string)
-        out = f'{lon_left_edge[lon_min_i[-1]]},{lon_left_edge[lon_max_i[-1]]},{lat_bottom_edge[lat_min_i[-1]]},{lat_bottom_edge[lat_max_i[-1]]}'
+        out = f'{lon_left_edge[lon_min_i[-1]]},{lon_left_edge[lon_max_i[-1]]},{lat_top_edge[lat_min_i[-1]]},{lat_top_edge[lat_max_i[-1]]}'
     
     else:
         print(f'WARNING: geospatial_coordinates_to_download_coordinates(): no code found to process {product}. Returning input as output.')
@@ -67,6 +67,19 @@ def geospatial_coordinates_to_download_coordinates(coords, product):
 
     print(f'Returning coordinates as type {type(out)} for use with {product} download code.')
     return out
+
+def subset_tif(infile,outfile,subset_window):
+
+    '''Subsets a GeoTIFF file'''
+
+    infile = str(infile)
+    outfile = str(outfile)
+    
+    tif_options = gdal.TranslateOptions(format='GTiff', projWin=subset_window, creationOptions=['COMPRESS=DEFLATE','BIGTIFF=YES']) 
+    tif = gdal.Translate(outfile, infile, options=tif_options)
+    tif = None
+    
+    return
 
 # --- Soilgrids
 def find_folders_on_webpage(url):
@@ -283,3 +296,4 @@ def merge_glclu2019_files_into_one(merged_file, src_folder, des_folder, download
     cs.merge_merit_downloads_into_area_of_interest(all_files, str(des_folder/merged_file), window) # originally built for MERIT, should work here too
     
     return
+
