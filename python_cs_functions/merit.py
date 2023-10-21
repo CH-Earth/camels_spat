@@ -10,13 +10,19 @@
 # Knoben, W. J. M., Marsh, C. B., & Tang, G. (2022b). CH-Earth/CWARHM: Initial 
 #   release (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.6968609
 
+import numpy as np
+import os
+from osgeo import gdal
+import sys
+from pathlib import Path
+sys.path.append(str(Path().absolute().parent))
+import python_cs_functions as cs
+
 def read_merit_credentials(file_path = 'default'):
     
     '''Reads MERIT Hydro login credentials from [file_path].
        Unless specified, file is assumed to be ~/.merit'''
-    
-    import os
-    
+       
     if file_path == 'default':
         file_path = os.path.expanduser("~/.merit")
       
@@ -37,9 +43,7 @@ def read_hydroshare_credentials(file_path = 'default'):
     
     '''Reads HydroShare login credentials from [file_path].
        Unless specified, file is assumed to be ~/.hydroshare'''
-    
-    import os
-    
+
     if file_path == 'default':
         file_path = os.path.expanduser("~/.hydroshare")
       
@@ -61,8 +65,6 @@ def convert_coordinates_to_merit_download_lists(coords):
     '''Converts [coords] as (lon_min,lon_max,lat_min,lat_max) to lists that 
        can be used to download various MERIT Hydro files for that area.'''
     
-    import numpy as np
-
     # Convert area string into list
     coords = coords.split(',')
 
@@ -95,12 +97,6 @@ def download_merit_hydro_grid(url,usr,pwd,dest_folder,
     '''Downloads MERIT Hydro [URL] into [dest_folder],
        using [usr] and [pwd] as login credentials.'''
     
-    import os
-    import sys
-    from pathlib import Path
-    sys.path.append(str(Path().absolute().parent))
-    import python_cs_functions as cs
-    
     # Extract the filename from the URL
     file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters
     
@@ -123,13 +119,11 @@ def download_merit_hydro_grid(url,usr,pwd,dest_folder,
     return
 
 
-def merge_merit_downloads_into_area_of_interest(input_files,output_file,subset_window):
+def merge_merit_downloads_into_area_of_interest(input_files,output_file,subset_window,no_data_value=''):
     
     '''Merges individual downloaded Merit Hydro GeoTIFF files into a single GeoTIFF file.
        Performs a subsetting of the individual files to only include area of interest in single file.
        Assumption: subsetting window is covered by the individual files - no checks to confirm this'''
-       
-    from osgeo import gdal
     
     # Create a virtual dataset (VRT) of all individual GeoTIFF files that's not written to disk (argument '')
     vrt_options = gdal.BuildVRTOptions(resolution='highest')
@@ -139,6 +133,12 @@ def merge_merit_downloads_into_area_of_interest(input_files,output_file,subset_w
     tif_options = gdal.TranslateOptions(format='GTiff', 
                                         projWin=subset_window, 
                                         creationOptions=['COMPRESS=DEFLATE','BIGTIFF=YES']) 
+    if no_data_value:
+        tif_options = gdal.TranslateOptions(format='GTiff', 
+                                            projWin=subset_window,
+                                            noData=no_data_value,
+                                            creationOptions=['COMPRESS=DEFLATE','BIGTIFF=YES']) 
+    
     tif = gdal.Translate(output_file, vrt, options=tif_options)
     
     # Ensure merged GeoTIFF is actually written to disk
@@ -147,4 +147,3 @@ def merge_merit_downloads_into_area_of_interest(input_files,output_file,subset_w
     tif = None
     
     return
-       

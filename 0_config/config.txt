@@ -84,8 +84,17 @@ forest_2000_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_heig
 forest_2020_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_height_2020/2020_{}_{}.tif          | string  # Download URL for FEHC maps
 soil_depth_path      | pelletier                                                                                | string  # Folder for Pelletier soil data downloads
 soil_depth_urls      | 0_config/pelletier_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
+lai_path             | lai                                                                                      | string  # Folder for MODIS LAI data downloads
+lai_url              | https://e4ftl01.cr.usgs.gov/MOTA/MCD15A2H.061/                                           | string  # Download URL for MODIS LAI data
+lai_docs             | https://lpdaac.usgs.gov/documents/926/MOD15_User_Guide_V61.pdf                           | string  # Download URL for MODIS LAI User Guide
+agriculture_path     | lgrip30                                                                                  | string  # Folder for LGRIP30 data downloads
+agriculture_url      | https://e4ftl01.cr.usgs.gov/COMMUNITY/LGRIP30.001/2014.01.01/                            | string  # Download URL for LGRIP30 data
+agriculture_docs     | https://lpdaac.usgs.gov/documents/1619/LGRIP30_User_Guide_v1.pdf                         | string  # Download URL for LGRIP30 User Guide
+geology_path         | glhymps                                                                                  | string  # Folder for GLHYMPS data downloads
+geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1.0                              | string  # Download URL for LGRIP30 data
 
 
-lai_path | lai
-lai_url  |
-lai_docs | https://lpdaac.usgs.gov/documents/926/MOD15_User_Guide_V61.pdf
+
+
+
+

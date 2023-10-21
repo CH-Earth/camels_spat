@@ -42,7 +42,7 @@ def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}, ove
                 print('Successfully downloaded ' + url)
                     
         except Exception as e:
-            print('Error downloading ' + file_url + ' on try ' + str(retries_cur) + ' with error: ' + str(e))
+            print('Error downloading ' + url + ' on try ' + str(retries_cur) + ' with error: ' + str(e))
             retries_cur += 1
             continue
         else:
