@@ -92,7 +92,8 @@ agriculture_url      | https://e4ftl01.cr.usgs.gov/COMMUNITY/LGRIP30.001/2014.01
 agriculture_docs     | https://lpdaac.usgs.gov/documents/1619/LGRIP30_User_Guide_v1.pdf                         | string  # Download URL for LGRIP30 User Guide
 geology_path         | glhymps                                                                                  | string  # Folder for GLHYMPS data downloads
 geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1.0                              | string  # Download URL for LGRIP30 data
-
+climate_path         | worldclim                                                                                | string  # Folder for Pelletier soil data downloads
+climate_urls         | 0_config/worldclim_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
 
 
 
