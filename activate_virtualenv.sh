@@ -12,12 +12,6 @@
 # --------------------------------------
 config="./0_config/config.txt"
 
-# Get all the relevant info from the config file
-# ----------------------------------------------
-# Config file always has the setting we want as the 2nd item in a row, separated by \ or #
-while IFS='|#' read -ra LINE; do venv_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_path" $config) # Where the venv should go
-while IFS='|#' read -ra LINE; do venv_name=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_name" $config) # What the venv will be called
-
 # Figure out what OS we are on
 # ----------------------------
 # Source: https://stackoverflow.com/a/3466183
@@ -37,7 +31,19 @@ esac
 # ----------------------------------------
 if [[ "UNKNOWN" == *${machine}* ]]; then
     echo "OS ${machine}"
-	exit 1 # Catch-all error code: https://tldp.org/LDP/abs/html/exitcodes.html
+    exit 1 # Catch-all error code: https://tldp.org/LDP/abs/html/exitcodes.html
+fi
+
+# Get all the relevant info from the config file
+# ----------------------------------------------
+# Config file always has the setting we want as the 2nd item in a row, separated by \ or #
+echo "Attempting to read from ${config} using ${machine} command."
+if [[ "Unix" == *${machine}* ]]; then
+    venv_path=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^venv_path" $config) | tr -d ' ')
+    venv_name=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^venv_name" $config) | tr -d ' ')
+elif [[ "Windows" == *${machine}* ]]; then
+    while IFS='|#' read -ra LINE; do venv_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_path" $config) # Where the venv should go
+    while IFS='|#' read -ra LINE; do venv_name=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_name" $config) # What the venv will be called
 fi
 
 # Activate the virtualenv

@@ -15,28 +15,6 @@
 # --------------------------------------
 config="../0_config/config.txt"
 
-# Get all the relevant info from the config file
-# ----------------------------------------------
-# Config file always has the setting we want as the 2nd item in a row, separated by \ or #
-while IFS='|#' read -ra LINE; do venv_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_path" $config) # Where the venv should go
-while IFS='|#' read -ra LINE; do venv_name=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_name" $config) # What the venv will be called
-while IFS='|#' read -ra LINE; do code_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^code_path" $config) # Root path to code
-while IFS='|#' read -ra LINE; do reqs_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^reqs_path" $config) # Requirements file sub-folder(s)
-while IFS='|#' read -ra LINE; do reqs_file=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^reqs_file" $config) # Requirements filename
-
-# Ensure a clean install
-# ----------------------
-echo "Attempting to install virtualenv ${venv_path}/${venv_name}. Will remove venv folder if it exists to ensure a clean install."
-mkdir -p "${venv_path}/${venv_name}" # Ensure the destination directory exists
-rm -rf "${venv_path}/${venv_name}" # Remove the virtualenv if it exists
-
-# Make the virtualenv
-# -------------------
-# Source: https://docs.python.org/3/library/venv.html
-# Note: command should work on both Windows and Unix(-like) OS
-# Note: assumes Python 3 is available on the system and added to the PATH
-python -m venv "${venv_path}/${venv_name}"
-
 # Figure out what OS we are on
 # ----------------------------
 # Source: https://stackoverflow.com/a/3466183
@@ -58,6 +36,37 @@ if [[ "UNKNOWN" == *${machine}* ]]; then
     echo "Unknown OS ${machine}. Aborting."
 	exit 1 # Catch-all error code: https://tldp.org/LDP/abs/html/exitcodes.html
 fi
+
+# Get all the relevant info from the config file
+# ----------------------------------------------
+# Config file always has the setting we want as the 2nd item in a row, separated by \ or #
+echo "Attempting to read from ${config} using ${machine} command."
+if [[ "Unix" == *${machine}* ]]; then
+    venv_path=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^venv_path" $config) | tr -d ' ')
+    venv_name=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^venv_name" $config) | tr -d ' ')
+    code_path=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^code_path" $config) | tr -d ' ')
+    reqs_path=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^reqs_path" $config) | tr -d ' ')
+    reqs_file=$(sed -n 's/.*|\(.*\)|.*/\1/p' <<< $(grep -m 1 "^reqs_file" $config) | tr -d ' ')
+elif [[ "Windows" == *${machine}* ]]; then
+	while IFS='|#' read -ra LINE; do venv_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_path" $config) # Where the venv should go
+	while IFS='|#' read -ra LINE; do venv_name=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^venv_name" $config) # What the venv will be called
+	while IFS='|#' read -ra LINE; do code_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^code_path" $config) # Root path to code
+	while IFS='|#' read -ra LINE; do reqs_path=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^reqs_path" $config) # Requirements file sub-folder(s)
+	while IFS='|#' read -ra LINE; do reqs_file=$(echo ${LINE[1]}); done <<< $(grep -m 1 "^reqs_file" $config) # Requirements filename
+fi
+
+# Ensure a clean install
+# ----------------------
+echo "Attempting to install virtualenv ${venv_path}/${venv_name}. Will remove venv folder if it exists to ensure a clean install."
+mkdir -p "${venv_path}/${venv_name}" # Ensure the destination directory exists
+rm -rf "${venv_path}/${venv_name}" # Remove the virtualenv if it exists
+
+# Make the virtualenv
+# -------------------
+# Source: https://docs.python.org/3/library/venv.html
+# Note: command should work on both Windows and Unix(-like) OS
+# Note: assumes Python 3 is available on the system and added to the PATH
+python3 -m venv "${venv_path}/${venv_name}"
 
 # Activate the virtualenv
 # -----------------------
@@ -84,16 +93,20 @@ fi
 
 # Update the basics
 # -----------------
-python -m pip install --upgrade pip
-python -m pip install --upgrade wheel
-python -m pip install --upgrade setuptools
+python3 -m pip install --upgrade pip
+python3 -m pip install --upgrade wheel
+python3 -m pip install --upgrade setuptools
 
 # Make sure we have the required libraries (GDAL)
 # -----------------------------------------------
 echo "Attempting to activate/install libraries using ${machine} command."
 if [[ "Unix" == *${machine}* ]]; then
-    echo "No settings yet defined for Unix systems. Aborting."
-	exit 1 
+    if gdalinfo --version &> /dev/null; then
+    	echo 'GDAL install found on system. Continuing.'
+    else
+    	echo 'Attempting to install GDAL using homebrew.'
+    	brew install gdal
+    fi
 elif [[ "Windows" == *${machine}* ]]; then
     echo "Using pre-built wheels to install GDAL and Fiona for Windows x64."
 	# Install GDAL 3.4.3 with a pre-built wheel for Windows
@@ -104,12 +117,12 @@ elif [[ "Windows" == *${machine}* ]]; then
 	
 	# Install Fiona with a pre-built wheel for Windows
 	# Wheel source: https://www.lfd.uci.edu/~gohlke/pythonlibs/#fiona
-	python -m pip install Fiona-1.8.21-cp38-cp38-win_amd64.whl
+	python3 -m pip install Fiona-1.8.21-cp38-cp38-win_amd64.whl
 fi
 
 # Install the required packages
 # -----------------------------
-python -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" 
+python3 -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" 
 
 # Ensure the virtualenv is available as a notebook kernel
 # -------------------------------------------------------
@@ -121,7 +134,7 @@ ipython kernel install --user --name=${venv_name}
 echo # empty line for clarity on the terminal
 echo "Checking packages installed in: ${venv_name}"
 cd $code_path/python_tests # needed because using relative paths to a parent directory doesn't play nice with next line
-python -m unittest test_requirements
+python3 -m unittest test_requirements
 
 # Clean-up
 # --------
