@@ -1,4 +1,6 @@
+cdsapi
 cligj
+easymore
 fiona
 gdal
 geopandas
@@ -6,14 +8,17 @@ hs_restclient
 jupyter
 matplotlib
 munch
+netcdf4
 numpy
 openpyxl
 packaging
 pandas
 py7zr
+pyshp
 pysheds
 requests
 rtree
+seaborn
 shapely
 six
 xarray

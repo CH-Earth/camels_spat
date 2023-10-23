@@ -14,6 +14,7 @@
 # Main settings
 code_path | C:\Git_repos\camels_spat\       | string  # Root path of processing code
 data_path | C:\Globus endpoint\CAMELS_spat\ | string  # Root path of data location
+temp_path | C:\Globus endpoint\CAMELS_spat\camels-spat-data/temp | string  # Path to temporary data folder - good for intermediate storage
 
 # 1. Python setup
 venv_path | C:\Globus endpoint\CAMELS_spat\ | string  # Path where the Python virtual environment will be created
