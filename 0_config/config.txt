@@ -63,3 +63,40 @@ wsc_start_t     | 2021-06-01               | string  # Start time for WSC data d
 wsc_start_e     | 2023-01-02               | string  # End time for WSC data downloads
 hydat_start_t   | 1950-01-01               | string  # Start time for HYDAT data extraction
 hydat_start_e   | 2023-01-02               | string  # End time for HYDAT data extraction
+
+# 7. Forcing data downloads
+# n/a
+
+# 8. Geospatial data downloads
+geospatial_area      | -179.5,-50,5,85                                                                          | string  # Download coordinates for North American domain [85/-179.5/5/-50]
+geospatial_temp_path | geospatial_temp                                                                          | string  # Path for temporary data storage of geospatial data sets (before subsetting)
+dem_path             | merit                                                                                    | string  # Folder for the DEM downloads
+dem_url              | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/elv_{}{}.tar         | string  # Download URL for Merit Hydro Adjusted Elevations
+soil_path            | soilgrids                                                                                | string  # Folder for soil downloads
+soil_url             | https://files.isric.org/soilgrids/latest/data/                                           | string  # Download URL for soilgrids files
+lake_path            | hydrolakes                                                                               | string  # Folder for hydrolakes downloads
+lake_url             | https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip                 | string  # Download URL for soilgrids files
+land_path            | glclu2019                                                                                | string  # Folder for glclu2019 downloads
+land_map_url         | https://storage.googleapis.com/earthenginepartners-hansen/GLCLU_2019/strata/{}_{}.tif    | string  # Download URL for glclu2019 maps
+land_strata_url      | https://storage.googleapis.com/earthenginepartners-hansen/GLCLU_2019/map/{}_{}.tif       | string  # Download URL for glclu2019 strata
+land_legend          | https://glad.umd.edu/sites/default/files/legend_0.xlsx                                   | string  # Download URL for land use legend
+forest_path          | forest_height                                                                            | string  # Folder for Forest Extent and Height Change, 2000-2020 downloads
+forest_2000_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_height_2000/2000_{}_{}.tif          | string  # Download URL for FEHC maps
+forest_2020_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_height_2020/2020_{}_{}.tif          | string  # Download URL for FEHC maps
+soil_depth_path      | pelletier                                                                                | string  # Folder for Pelletier soil data downloads
+soil_depth_urls      | 0_config/pelletier_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
+lai_path             | lai                                                                                      | string  # Folder for MODIS LAI data downloads
+lai_url              | https://e4ftl01.cr.usgs.gov/MOTA/MCD15A2H.061/                                           | string  # Download URL for MODIS LAI data
+lai_docs             | https://lpdaac.usgs.gov/documents/926/MOD15_User_Guide_V61.pdf                           | string  # Download URL for MODIS LAI User Guide
+agriculture_path     | lgrip30                                                                                  | string  # Folder for LGRIP30 data downloads
+agriculture_url      | https://e4ftl01.cr.usgs.gov/COMMUNITY/LGRIP30.001/2014.01.01/                            | string  # Download URL for LGRIP30 data
+agriculture_docs     | https://lpdaac.usgs.gov/documents/1619/LGRIP30_User_Guide_v1.pdf                         | string  # Download URL for LGRIP30 User Guide
+geology_path         | glhymps                                                                                  | string  # Folder for GLHYMPS data downloads
+geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1.0                              | string  # Download URL for LGRIP30 data
+climate_path         | worldclim                                                                                | string  # Folder for Pelletier soil data downloads
+climate_urls         | 0_config/worldclim_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
+
+
+
+
+

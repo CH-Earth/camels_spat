@@ -1,0 +1,7 @@
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_tmin.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_tmax.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_tavg.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_prec.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_srad.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_wind.zip
+https://biogeo.ucdavis.edu/data/worldclim/v2.1/base/wc2.1_30s_vapr.zip
