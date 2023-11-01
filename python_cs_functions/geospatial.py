@@ -8,21 +8,22 @@ import glob
 import netCDF4 as nc4
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import os
 from osgeo import gdal
+from pathlib import Path
 import rasterio
 import re
 import requests
 from shapely.geometry import box
 import shutil
+import sys
 import time
 from urllib.parse import urljoin
+import warnings
 import xarray as xr
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 
-import sys
-from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
@@ -108,6 +109,58 @@ def subset_tif(infile,outfile,subset_window):
     tif = None
     
     return
+
+def subset_geotiff_to_shapefile(src_file,src_shape,des_folder,
+                                buffer=False,
+                                out_no_data = None):
+
+    # Input cleaning
+    des_folder.mkdir(parents=True, exist_ok=True)
+    des_file  = str(des_folder / os.path.basename(src_file))
+    src_file  = str(src_file)
+    src_shape = str(src_shape)
+    
+    # Handle buffering of shapefile, if requested
+    if buffer:
+        tmp_shape = src_shape.replace('.shp','_TEMP.shp')
+    
+        # Find buffer distance
+        src_tiff = gdal.Open(src_file, gdal.GA_ReadOnly)
+        pixel_x  = src_tiff.GetGeoTransform()[1]
+        pixel_y  = src_tiff.GetGeoTransform()[5]
+        buffer   = 0.5*(pixel_x**2 + pixel_y**2)**(0.5) # I.e., half the maximum distance from center to edge of pixel
+        src_tiff = None
+        
+        # Temporarily block warnings: 
+        # gpd will tell us that buffering in EPSG:4326 is not accurate - this is fine because we're
+        # buffering in lat/lon units
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore') 
+    
+            # Buffer the shapefile
+            shp = gpd.read_file(src_shape)
+            shp['geometry'] = shp.buffer(buffer)
+            shp.to_file(tmp_shape)
+    else:
+        # Not using buffered shape, but code below still needs 'tmp_shape' to have a value
+        tmp_shape = src_shape
+
+    # Clip
+    gdal.Warp(destNameOrDestDS = des_file,
+              srcDSOrSrcDSTab  = src_file,
+              cutlineDSName    = tmp_shape, # vector file
+              cropToCutline    = True, # Select True
+              copyMetadata     = True, # optional
+              #dstAlpha         = True, # Dropping the alpha band saves half the file size
+              dstNodata        = out_no_data,
+              srcSRS           = 'EPSG:4326',
+              dstSRS           = 'EPSG:4326',
+              #resampleAlg      = "nearestneighbour"
+             )
+    
+    # Remove buffered shapefile
+    if buffer:
+        os.remove(tmp_shape)
 
 # --- Soilgrids
 def find_folders_on_webpage(url,product='soilgrids'):
