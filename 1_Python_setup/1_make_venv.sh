@@ -102,9 +102,11 @@ python3 -m pip install --upgrade setuptools
 echo "Attempting to activate/install libraries using ${machine} command."
 if [[ "Unix" == *${machine}* ]]; then
     if gdalinfo --version &> /dev/null; then
-    	echo 'GDAL install found on system. Continuing.'
+    	gdal_version=$(gdalinfo --version) # E.g. 'GDAL 3.7.2, released 2023/09/05'
+    	gdal_version=$(echo $gdal_version | awk '{print $2}' | tr -d ',')
+    	echo "GDAL ${gdal_version} install found on system. Continuing."
     else
-    	echo 'Attempting to install GDAL using homebrew.'
+    	echo "Attempting to install GDAL using homebrew."
     	brew install gdal
     fi
 elif [[ "Windows" == *${machine}* ]]; then
@@ -122,7 +124,16 @@ fi
 
 # Install the required packages
 # -----------------------------
-python3 -m pip install -r "${code_path}/${reqs_path}/${reqs_file}" 
+python3 -m pip install -r "${code_path}/${reqs_path}/${reqs_file}"
+
+# Force reinstall of GDAL, to ensure numpy connection is correct
+# See: https://gis.stackexchange.com/questions/83138/cannot-import-gdal-array
+# Note: specifying numpy as a dependency for gdal in requirements.txt (gdal [numpy]) does not seem to work
+# Note: specifying the version string without purging cache isn't enough
+# Note: Without purging the cache it still fails
+python3 -m pip cache purge
+gdal_str="python3 -m pip install -v --force-reinstall gdal[numpy]==${gdal_version}"
+eval $gdal_str
 
 # Ensure the virtualenv is available as a notebook kernel
 # -------------------------------------------------------
