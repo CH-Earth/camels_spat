@@ -12,10 +12,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import os
 from osgeo import gdal
+gdal.UseExceptions()
 from pathlib import Path
 import rasterio
 import re
 import requests
+from shapely import make_valid
 from shapely.geometry import box
 import shutil
 import sys
@@ -119,6 +121,12 @@ def subset_geotiff_to_shapefile(src_file,src_shape,des_folder,
     des_file  = str(des_folder / os.path.basename(src_file))
     src_file  = str(src_file)
     src_shape = str(src_shape)
+
+    # Handle the specific MERIT case - buffering breaks things here for no apparent reason
+    # We can get away with no buffering because the shapes are derived from the MERIT DEM and
+    #  thus align perfectly
+    if 'merit' in src_file:
+        buffer = False
     
     # Handle buffering of shapefile, if requested
     if buffer:
@@ -140,6 +148,7 @@ def subset_geotiff_to_shapefile(src_file,src_shape,des_folder,
             # Buffer the shapefile
             shp = gpd.read_file(src_shape)
             shp['geometry'] = shp.buffer(buffer)
+            shp.geometry = shp.apply(lambda row: make_valid(row.geometry), axis=1)
             shp.to_file(tmp_shape)
     else:
         # Not using buffered shape, but code below still needs 'tmp_shape' to have a value
@@ -160,7 +169,38 @@ def subset_geotiff_to_shapefile(src_file,src_shape,des_folder,
     
     # Remove buffered shapefile
     if buffer:
-        os.remove(tmp_shape)
+        remove_these = glob.glob(tmp_shape.replace('.shp','.*'))
+        for file in remove_these:
+            os.remove(file)
+
+def subset_shapefile_to_shapefile(src,src_file,src_shape,des_folder):
+
+    # Input cleaning
+    des_folder.mkdir(parents=True, exist_ok=True)
+    des_file  = str(des_folder / os.path.basename(src_file))
+    src_file  = str(src_file)
+    src_shape = str(src_shape)
+   
+    # Open the basin shapefile
+    shp = gpd.read_file(src_shape)
+    
+    # Loop over the geometries to check if they intersect, then use this info to create a HydroLAKES subset
+    # Note: this is cleaner than des = gpd.overlay(src,shp, how='intersection'), because this alternative
+    #   approach may be faster, but it clips the lake polygons to the catchment extent. The consequence of
+    #   this is that the lake area reported as part of the HydroLAKES subset may be inaccurate, in cases
+    #   where that polygon was clipped by the catchment outline. With the current approach we return the
+    #   complete lake polygons.
+    if 'hydrolakes' in src_file.lower():
+        src['mask'] = src.apply(lambda row: row.geometry.intersects(shp.geometry), axis=1)
+        des = src[src['mask'] == True].copy().reset_index(drop=True)
+        des = des.drop('mask', axis=1)
+    elif 'glhymps' in src_file.lower():
+        des = gpd.overlay(src,shp,how='intersection') # Faster than above, clipping these polygons is fine because they don't contain an 'area' field
+    
+    # To file
+    des.to_file(des_file)
+
+    return # nothing
 
 # --- Soilgrids
 def find_folders_on_webpage(url,product='soilgrids'):
