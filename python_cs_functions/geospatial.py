@@ -198,7 +198,12 @@ def subset_shapefile_to_shapefile(src,src_file,src_shape,des_folder):
         des = gpd.overlay(src,shp,how='intersection') # Faster than above, clipping these polygons is fine because they don't contain an 'area' field
     
     # To file
-    des.to_file(des_file)
+    if len(des) > 0:
+        des.to_file(des_file) # write the shapefile to file
+    else:
+        txt_file = f'{os.path.splitext(des_file)[0]}.txt'
+        with open(txt_file,'w') as f:
+            f.write('Source data does not intersect with catchment shapefile')
 
     return # nothing
 
