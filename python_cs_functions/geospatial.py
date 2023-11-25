@@ -379,7 +379,12 @@ def process_daily_modis_hdf_to_tif(in_folder, out_folder,
     vrt = gdal.BuildVRT('', hdf_inlist, options=vrt_options)
 
     # Reproject the VRT
-    warp_options = gdal.WarpOptions(format='VRT', dstSRS=to_CRS)
+    if subset_window:
+        warp_options = gdal.WarpOptions(format='VRT', 
+                                        outputBounds=[subset_window[0],subset_window[3],subset_window[2],subset_window[1]], 
+                                        dstSRS=to_CRS)
+    else:
+        warp_options = gdal.WarpOptions(format='VRT', dstSRS=to_CRS)
     vrt_4326 = gdal.Warp('', vrt, options=warp_options)
 
     # Subset and convert to geotiff
