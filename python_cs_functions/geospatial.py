@@ -120,6 +120,9 @@ def find_folders_on_webpage(url,product='soilgrids'):
         elif product.lower() == 'mcd15a2h.061':
             pattern = r'\d{4}\.\d{2}\.\d{2}' # E.g., '2002.07.28'
             folder_links = [a['href'] for a in soup.find_all('a', href=True) if re.match(pattern, a['href'])]
+        elif product.lower() == 'mcd12q1.061':
+            pattern = r'\d{4}\.\d{2}\.\d{2}' # E.g., '2002.07.28'
+            folder_links = [a['href'] for a in soup.find_all('a', href=True) if re.match(pattern, a['href'])]
     
         # Convert relative URLs to absolute URLs.
         folder_links = [urljoin(url, link) for link in folder_links]

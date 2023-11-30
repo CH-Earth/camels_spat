@@ -79,6 +79,9 @@ land_path            | glclu2019                                                
 land_map_url         | https://storage.googleapis.com/earthenginepartners-hansen/GLCLU_2019/strata/{}_{}.tif    | string  # Download URL for glclu2019 maps
 land_strata_url      | https://storage.googleapis.com/earthenginepartners-hansen/GLCLU_2019/map/{}_{}.tif       | string  # Download URL for glclu2019 strata
 land_legend          | https://glad.umd.edu/sites/default/files/legend_0.xlsx                                   | string  # Download URL for land use legend
+land2_path           | modis_land                                                                               | string  # Folder for glclu2019 downloads
+land2_url            | https://e4ftl01.cr.usgs.gov/MOTA/MCD12Q1.061/                                            | string  # Download URL for MODIS LAI data
+land2_docs           | https://lpdaac.usgs.gov/documents/1409/MCD12_User_Guide_V61.pdf                          | string  # Download URL for MODIS LAI User Guide
 forest_path          | forest_height                                                                            | string  # Folder for Forest Extent and Height Change, 2000-2020 downloads
 forest_2000_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_height_2000/2000_{}_{}.tif          | string  # Download URL for FEHC maps
 forest_2020_url      | https://glad.umd.edu/users/Potapov/GLCLUC2020/Forest_height_2020/2020_{}_{}.tif          | string  # Download URL for FEHC maps
@@ -94,8 +97,6 @@ geology_path         | glhymps                                                  
 geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1.0                              | string  # Download URL for LGRIP30 data
 climate_path         | worldclim                                                                                | string  # Folder for Pelletier soil data downloads
 climate_urls         | 0_config/worldclim_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
-
-
 
 
 
