@@ -226,6 +226,9 @@ def find_folders_on_webpage(url,product='soilgrids'):
         elif product.lower() == 'mcd15a2h.061':
             pattern = r'\d{4}\.\d{2}\.\d{2}' # E.g., '2002.07.28'
             folder_links = [a['href'] for a in soup.find_all('a', href=True) if re.match(pattern, a['href'])]
+        elif product.lower() == 'mcd12q1.061':
+            pattern = r'\d{4}\.\d{2}\.\d{2}' # E.g., '2002.07.28'
+            folder_links = [a['href'] for a in soup.find_all('a', href=True) if re.match(pattern, a['href'])]
     
         # Convert relative URLs to absolute URLs.
         folder_links = [urljoin(url, link) for link in folder_links]
@@ -485,7 +488,12 @@ def process_daily_modis_hdf_to_tif(in_folder, out_folder,
     vrt = gdal.BuildVRT('', hdf_inlist, options=vrt_options)
 
     # Reproject the VRT
-    warp_options = gdal.WarpOptions(format='VRT', dstSRS=to_CRS)
+    if subset_window:
+        warp_options = gdal.WarpOptions(format='VRT', 
+                                        outputBounds=[subset_window[0],subset_window[3],subset_window[2],subset_window[1]], 
+                                        dstSRS=to_CRS)
+    else:
+        warp_options = gdal.WarpOptions(format='VRT', dstSRS=to_CRS)
     vrt_4326 = gdal.Warp('', vrt, options=warp_options)
 
     # Subset and convert to geotiff
