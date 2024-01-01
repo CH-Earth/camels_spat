@@ -49,7 +49,8 @@ Code adapted from CWARHM: https://github.com/CH-Earth/CWARHM/
 - Potential evaporation (PET, see notes in paper)
     - #39 in Table 4
     - Variable name: `mean_potential_evaporation_rate`
-    - Description: https://codes.ecmwf.int/grib/param-db/?id=228251
+    - Description: https://codes.ecmwf.int/grib/param-db/?id=235070
+    - Additional details: https://codes.ecmwf.int/grib/param-db/?id=228251
 
 #### Summary pressure level variables
 -  Temperature
