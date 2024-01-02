@@ -1158,13 +1158,13 @@ def add_derived_variables(file):
     '''Adds various derived meteorological variables to a netCDF file with existing ERA5 forcing data'''
 
     with nc4.Dataset(file, 'r+') as f:
-        f = derive_reflected_shortwave_radiation(f)
-        f = derive_net_radiation(f)
+        #f = derive_reflected_shortwave_radiation(f) # disabled, because on reflection we don't want to provide this variable after all
+        #f = derive_net_radiation(f) # as above
         f = derive_vapor_pressure(f)
         f = derive_relative_humidity(f)
         f = derive_mean_wind_speed(f)
 
-def make_nc_variable(file, name, units, values, long_name='', standard_name='', history=''):
+def make_nc_variable(file, name, units, values, long_name='', standard_name='', history='', dims='lat/lon'):
 
     '''Makes a netcdf4 variable with dimensions (time,latitude,longitude) in file'''
 
@@ -1173,8 +1173,14 @@ def make_nc_variable(file, name, units, values, long_name='', standard_name='', 
     # - No fill value specified
     # - Compression options zlib=True, shuffle=True are active
 
-    # 1. Create the .nc variable 
-    file.createVariable(name,'f4',('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+    # 1. Create the .nc variable
+    if dims.lower() == 'lat/lon':
+        file.createVariable(name,'f4',('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
+    elif dims.lower() == 'hru':
+        file.createVariable(name,'f4',('time','hru'), fill_value = False, zlib=True, shuffle=True)
+    else:
+        print(f'!!! Warning: make_nc_variable(): dimensions option {dims} not recognized. Exiting.')
+        return file
 
     # 2. Set the attributes FIRST, so we don't run into any scaling/offset issues
     file[name].setncattr('missing_value',-999)
@@ -1191,6 +1197,49 @@ def make_nc_variable(file, name, units, values, long_name='', standard_name='', 
         new_history = f'{current_history}{history}'
         file.setncattr('History', new_history)
     
+    return file
+
+def compute_wind_direction(u,v):
+    return (180 + 180/np.pi*np.arctan2(u,v)) % 360
+
+def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=False, dims='lat/lon'):
+
+    '''Adds wind direction to a netCDF4 file that cantains u and v wind components'''
+
+    # Note: np.arctan2() expects inputs as (y,x), so we would expect inputs as (v,u) (https://numpy.org/doc/stable/reference/generated/numpy.arctan2.html)
+    #  We deliberately need to swap these to get the correct angles:
+    # See also: https://confluence.ecmwf.int/pages/viewpage.action?pageId=133262398
+    #  Here, the excel function atan2 expects inputs as (x,y) and ECMWF swaps these to (v,u)
+    if test:
+        us   = [ 10,  10, -10, -10,  10, -10,   0,   0]
+        vs   = [ 10, -10,  10, -10,   0,   0,  10, -10]
+        phis = [225, 315, 135,  45, 270,  90, 180,   0] # known
+        for u_test,v_test,phi_test in zip(us,vs,phis):
+            new_value = compute_wind_direction(u_test,v_test)
+            assert new_value == phi_test, f'result {new_value} does not match known result {phi_test}, for u = {u_test}, v = {v_test}'
+        print('-- derive_wind_direction() test completed successfully')
+
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    u = file.variables[u_wind][:]
+    v = file.variables[v_wind][:]
+
+    # 2. Compute the new values
+    values_new = compute_wind_direction(u,v)
+    
+    # 3. Define other inputs
+    unit_new = 'degrees'
+    long_name = 'Meteorological wind direction computed from U and V wind components, indicating angle where wind is coming from with North at 0 degrees and increasing clock-wise '
+    new_history = f' On {time.ctime(time.time())}: derive_wind_direction().'
+
+    # 4. Make the variable
+    # By default, cs.make_nc_variable() uses dimensions (time,latitude,longitude)
+    #   because we have only used this for gridded netcdf files before.
+    #   This wind direction derivation is performed after netcdf regridding to
+    #   polygons, meaning we now have to deal with the original gridded (time,lat,lon)
+    #   dimensions, but also with the lumped and distributed cases where dimensions
+    #   are (time,hru)
+    file = cs.make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
+
     return file
 
 def derive_reflected_shortwave_radiation(file, incoming_shortwave='msdwswrf', net_shortwave='msnswrf', new_name='reflected_sw'):
