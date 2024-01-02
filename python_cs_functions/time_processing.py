@@ -39,13 +39,13 @@ def relative_utc_to_timedelta(utc_str):
     assert type(utc_str) == str, f'Input tz_str must be {str} but is {type(utc_str)}'
     
     # Define UTC-to-timedelta dictionary
-    dict_utc_to_timedelta = {'UTC-0330': '+3:30:00',
-                             'UTC-04'  : '+4:00:00',
-                             'UTC-05'  : '+5:00:00',
-                             'UTC-06'  : '+6:00:00',
-                             'UTC-07'  : '+7:00:00',
-                             'UTC-08'  : '+8:00:00',
-                             'UTC-09'  : '+9:00:00'}
+    dict_utc_to_timedelta = {'UTC-0330': '-3:30:00',
+                             'UTC-04'  : '-4:00:00',
+                             'UTC-05'  : '-5:00:00',
+                             'UTC-06'  : '-6:00:00',
+                             'UTC-07'  : '-7:00:00',
+                             'UTC-08'  : '-8:00:00',
+                             'UTC-09'  : '-9:00:00'}
     
     return dict_utc_to_timedelta[utc_str]
 
@@ -135,7 +135,8 @@ def resample_arbitrary_flux_observations_to_hourly(df, data='data', center_windo
     df[data] = df[data].interpolate(method='time', limit_area='inside') # only interpolate between valid values
     
     # Get an x-axis for integration in seconds
-    df['time_diff_in_sec'] = (df.index - df.index[0]).astype('timedelta64[s]')
+    #df['time_diff_in_sec'] = (df.index - df.index[0]).astype('timedelta64[s]')
+    df['time_diff_in_sec'] = (df.index - df.index[0]).total_seconds()
     
     # Convert all arrays from shape (n,) to (1,n), so we can use np.hstack() later
     # left side of interval
@@ -556,7 +557,7 @@ def prep_daily_country_csv_for_netcdf(csv_path,country,tz):
     return csv
 
    
-def subdaily_flow_csv_to_netcdf(csv, nc_path, country, station):
+def subdaily_flow_csv_to_netcdf(csv, nc_path, country, station, tz, center_window):
     
     '''Converts a standardized csv file with flow observations to xarray data set and saves as netcdf'''
     
@@ -619,11 +620,13 @@ def subdaily_flow_csv_to_netcdf(csv, nc_path, country, station):
         
     # 4b. Time bounds variable
     ds = ds.assign_coords(nbnds=[1,2])
-    ds = ds.assign(time_bnds=(['nbnds','time'],
-                              [csv.index - pd.Timedelta('30min'), csv.index + pd.Timedelta('30min')]))
+    if center_window:    
+        ds = ds.assign(time_bnds=(['nbnds','time'], [csv.index - pd.Timedelta('30min'), csv.index + pd.Timedelta('30min')]))
+    else:
+        ds = ds.assign(time_bnds=(['nbnds','time'], [csv.index, csv.index + pd.Timedelta('1h')]))
     ds.nbnds.attrs['standard_name'] = 'bounds for timestep intervals'
     ds.time_bnds.attrs['long_name'] = 'start and end points of each time step'
-    ds.time_bnds.attrs['time_zone'] = 'UTC'
+    ds.time_bnds.attrs['time_zone'] = tz
     
     # 5. Observed streamflow
     ds.q_obs.attrs['units'] = q_obs_unit
@@ -728,9 +731,10 @@ def daily_flow_csv_to_netcdf(csv, nc_path, country, station):
                               [csv['time_bnds_l'], csv['time_bnds_r']]))
     ds.nbnds.attrs['standard_name'] = 'bounds for timestep intervals'
     ds.time_bnds.attrs['long_name'] = 'start and end points of each time interval'
-    ds.time_bnds.attrs['time_zone'] = 'UTC'
-    ds.time_bnds.attrs['station_standard_time'] = time_original_tz
-    
+    #ds.time_bnds.attrs['time_zone'] = 'UTC'
+    #ds.time_bnds.attrs['station_standard_time'] = time_original_tz
+    ds.time_bnds.attrs['time_zone'] = time_original_tz
+
     # 5. Observed streamflow
     ds.q_obs.attrs['units'] = q_obs_unit
     ds.q_obs.attrs['long_name'] = q_obs_long
@@ -757,7 +761,7 @@ def daily_flow_csv_to_netcdf(csv, nc_path, country, station):
             ds[variable].attrs['flag_meanings'] = "'no' 'yes'"
     
     # 8. Remove the timezone variables we added to get the time_bnds
-    ds = ds.drop_vars(['q_obs_tz_cd', 'datetime', 'tz_utc_str', 'tz_td_str', 'time_bnds_l', 'time_bnds_r'])
+    ds = ds.drop_vars(['q_obs_tz_cd', 'time_bnds_l', 'time_bnds_r'])
     
     # Save to file
     ds = ds.drop_indexes(['time','nbnds'])
