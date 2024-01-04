@@ -49,6 +49,23 @@ def relative_utc_to_timedelta(utc_str):
     
     return dict_utc_to_timedelta[utc_str]
 
+def relative_utc_to_float_offset_in_hours(utc_str):
+    '''Takes a UTC-xx string and converts to a float in hours'''
+    
+    # Check inputs
+    assert type(utc_str) == str, f'Input tz_str must be {str} but is {type(utc_str)}'
+    
+    # Define UTC-to-timedelta dictionary
+    dict_utc_to_float = {'UTC-0330': -3.5,
+                         'UTC-04'  : -4.0,
+                         'UTC-05'  : -5.0,
+                         'UTC-06'  : -6.0,
+                         'UTC-07'  : -7.0,
+                         'UTC-08'  : -8.0,
+                         'UTC-09'  : -9.0}
+    
+    return dict_utc_to_float[utc_str]
+
 def datetime_str_to_timeaware_datetime(date_str, offset='+00:00:00', localize_to_UTC=True):
     
     '''Takes a datetime string (yyyy-mm-dd hh:mm) and possible an offset 
