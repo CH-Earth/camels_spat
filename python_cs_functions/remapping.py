@@ -85,8 +85,7 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
     # Dataset-specific settings
     if data == 'ERA5':
         esmr.var_names = ['msdwlwrf', 'msnlwrf', 'msdwswrf', 'msnswrf', 'mtpr', 'sp',
-                          'mper', 't', 'q', 'u', 'v', 'reflected_sw', 'net_radiation',
-                          'e', 'rh', 'w'] # variable names of forcing data - hardcoded because we prescribe them during ERA5 merging
+                          'mper', 't', 'q', 'u', 'v', 'e', 'rh', 'w'] # variable names of forcing data - hardcoded because we prescribe them during ERA5 merging
     if data == 'EM-Earth':
         esmr.var_names = ['tmean', 'prcp'] 
 
