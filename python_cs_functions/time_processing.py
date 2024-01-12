@@ -1,8 +1,10 @@
 '''Contains functions for temporal processing of downloaded data (timezones, averaging, etc.)'''
 
+import netCDF4 as nc4
 import numpy as np
 import pandas as pd
 from scipy import integrate
+import time
 from datetime import timedelta
 from datetime import datetime
 
@@ -785,3 +787,47 @@ def daily_flow_csv_to_netcdf(csv, nc_path, country, station):
     ds.to_netcdf(nc_path)
         
     return ds
+
+# Update netcdf
+# -------------
+
+def add_time_bnds(file, dataset=[], timezone=[]):
+
+    '''Adds a time_bnds variable to a netcdf'''
+
+    with nc4.Dataset(file, 'a') as f: # (a)ppend
+
+        # Check that the approach within this function is valid
+        assert 'hours' in f['time'].getncattr('units'), f'ERROR: time units in {file} not in hours'
+
+        # Check that a source dataset is specified
+        assert (dataset.lower() == 'era5') | (dataset.lower() == 'em-earth'), \
+            f'add_time_bnds() contains no settings for dataset = {dataset}'
+
+        # Connect variable 'time_bounds' to variable 'time' through time attribute 'bounds'
+        f['time'].setncattr('bounds','time_bnds')
+
+        # Add nbnds dimension
+        f.createDimension('nbnds', 2)
+        f.createVariable('nbnds', 'i', 'nbnds')
+        f.variables['nbnds'][:] = [1,2]
+        f['nbnds'].setncattr('standard_name','bounds for timestep intervals')
+
+        # Add time_bnds variable
+        f.createVariable('time_bnds', f.variables['time'].datatype, ('nbnds','time'), fill_value = False, zlib=True, shuffle=True)
+        f['time_bnds'].setncattr('long_name', 'start and end points of each time step')
+        f['time_bnds'].setncattr('time_zone', timezone)
+        f['time_bnds'].setncattr('calendar', f['time'].getncattr('calendar'))
+        f['time_bnds'].setncattr('units', f['time'].getncattr('units'))
+
+        # Add the actual data
+        if dataset.lower() == 'era5':
+            f['time_bnds'][:] = np.array([f['time'][:]-1, f['time'][:]]) # Period-ending timestamps: t(n) is valid over t(n-1) to t(n)
+        if dataset.lower() == 'em-earth':
+            f['time_bnds'][:] = np.array([f['time'][:], f['time'][:]+1]) # Period-starting timestamps: t(n) is valid over t(n) to t(n+1)
+
+        # Update the file history
+        new_history = f' On {time.ctime(time.time())}: add_time_bnds().'
+        old_history = f.History
+        hist = f'{old_history} {new_history}'
+        f.setncattr('History',hist)
