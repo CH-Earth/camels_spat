@@ -9,6 +9,37 @@ from rasterstats import zonal_stats
 from scipy.stats import circmean, circstd, skew, kurtosis
 
 ## ------- Collection functions
+def attributes_from_lgrip30(geo_folder, dataset, shp_str, l_values, l_index):
+
+    '''Calculates percentage occurrence of all classes in LGRIP30 map'''
+
+    tif = geo_folder / dataset / 'raw' / 'lgrip30_agriculture.tif'
+    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    check_scale_and_offset(tif)
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'LGRIP30', prefix='lc3_')
+    return l_values, l_index
+
+def attributes_from_modis_land(geo_folder, dataset, shp_str, l_values, l_index):
+
+    '''Calculates percentage occurrence of all classes in MODIS IGBP map'''
+
+    tif = geo_folder / dataset / 'raw' / '2001_2022_mode_MCD12Q1_LC_Type1.tif'
+    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    check_scale_and_offset(tif)
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'MCD12Q1.061', prefix='lc2_')
+    return l_values, l_index
+
+def attributes_from_glclu2019(geo_folder, dataset, shp_str, l_values, l_index):
+
+    '''Calculates percentage occurrence of all classes in GLCLU2019 map'''
+
+    tif = geo_folder / dataset / 'raw' / 'glclu2019_map.tif'
+    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    check_scale_and_offset(tif)
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'GLCLU 2019', prefix='lc1_')
+    return l_values, l_index
+
+
 def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_mfdataset=False):
 
     '''Calculates a variety of metrics from ERA5 data'''
@@ -218,10 +249,10 @@ def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index)
     zonal_out = zonal_stats(shp_str, tif, stats=stats)
     scale,offset = read_scale_and_offset(tif)
     l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
-    index += [('Vegetation', 'forest_height_2000_min',   'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2000_mean',  'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2000_max',   'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2000_stdev', 'm', 'GLCLUC')]
+    index += [('Land cover', 'forest_height_2000_min',   'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2000_mean',  'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2000_max',   'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2000_std',   'm', 'GLCLUC 2000-2020')]
 
     # Year 2020 mean, stdev
     tif = geo_folder / dataset / 'raw' / 'forest_height_2020.tif'
@@ -229,10 +260,10 @@ def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index)
     zonal_out = zonal_stats(shp_str, tif, stats=stats)
     scale,offset = read_scale_and_offset(tif)
     l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
-    index += [('Vegetation', 'forest_height_2020_min',   'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2020_mean',  'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2020_max',   'm', 'GLCLUC'),
-              ('Vegetation', 'forest_height_2020_stdev', 'm', 'GLCLUC')]
+    index += [('Land cover', 'forest_height_2020_min',   'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2020_mean',  'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2020_max',   'm', 'GLCLUC 2000-2020'),
+              ('Land cover', 'forest_height_2020_std',   'm', 'GLCLUC 2000-2020')]
 
     return l_values, index
 
@@ -253,8 +284,8 @@ def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index
         scale,offset = read_scale_and_offset(month_file)
         l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
         month = os.path.basename(month_file).split('_')[2]
-        index += [(f'Vegetation', f'lai_mean_month_{month}',  'm^2 m^-2', 'MCD15A2H.061'),
-                  (f'Vegetation', f'lai_stdev_month_{month}', 'm^2 m^-2', 'MCD15A2H.061')]
+        index += [('Land cover', f'lai_mean_month_{month}',  'm^2 m^-2', 'MCD15A2H.061'),
+                  ('Land cover', f'lai_std_month_{month}',   'm^2 m^-2', 'MCD15A2H.061')]
     
     # Clear temp folder
     files_to_remove = os.listdir(temp_path)
@@ -299,6 +330,88 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
     return l_values, index
 
 ## ------- Component functions
+def check_scale_and_offset(tif):
+    scale,offset = read_scale_and_offset(tif) # just to check we don't have any scale/offset going on
+    if scale is None: scale = 1 # If scale is undefined that means we simply multiply by 1
+    if offset is None: offset = 0 # Undefined offset > add 0
+    if not (scale == 1) and not (offset == 0):
+        print(f'--- WARNING: check_scale_and_offset(): scale or offset not 1 or 0 respectively.')
+    return   
+
+def get_categorical_dict(source):
+    '''Contains dictionaries for categorical variables'''
+    
+    if source == 'GLCLU 2019':
+        cat_dict = {1: 'true_desert',
+                    2: 'semi_arid',
+                    3: 'dense_short_vegetation',
+                    4: 'open_tree_cover',
+                    5: 'dense_tree_cover',
+                    6: 'tree_cover_gain',
+                    7: 'tree_cover_loss',
+                    8: 'salt_pan',
+                    9: 'wetland_sparse_vegetation',
+                   10: 'wetland_dense_short_vegetation',
+                   11: 'wetland_open_tree_cover',
+                   12: 'wetland_dense_tree_cover',
+                   13: 'wetland_tree_cover_gain',
+                   14: 'wetland_tree_cover_loss',
+                   15: 'ice',
+                   16: 'water',
+                   17: 'cropland',
+                   18: 'built_up',
+                   19: 'ocean',
+                   20: 'no_data'}
+
+    if source == 'MCD12Q1.061':
+        cat_dict = {1: 'evergreen_needleleaf_forest',
+                    2: 'evergreen_broadleaf_forest',
+                    3: 'deciduous_needleleaf_forest',
+                    4: 'deciduous_broadleaf_forest',
+                    5: 'mixed_forest',
+                    6: 'closed_shrubland',
+                    7: 'open_shrubland',
+                    8: 'woody_savanna',
+                    9: 'savanna',
+                   10: 'grassland',
+                   11: 'permanent_wetland',
+                   12: 'cropland',
+                   13: 'urban_and_built_up',
+                   14: 'cropland_natural_mosaic',
+                   15: 'permanent_snow_ice',
+                   16: 'barren',
+                   17: 'water',
+                  255: 'unclassified'}
+
+    if source == 'LGRIP30':
+        cat_dict = {0: 'water',
+                    1: 'non_cropland',
+                    2: 'irrigated_cropland',
+                    3: 'rainfed_cropland'}
+    
+    return cat_dict
+
+def update_values_list_with_categorical(l_values, l_index, zonal_out, source, prefix=''):
+    '''Maps a zonal histogram of categorical classes onto descriptions and adds to lists'''
+
+    # Get the category definitions
+    cat_dict = get_categorical_dict(source)    
+
+    # Find the total number of classified pixels
+    total_pixels = 0
+    for land_id,count in zonal_out[0].items():
+        total_pixels += count
+    
+    # Loop over all categories and see what we have in this catchment
+    for land_id,text in cat_dict.items():
+        land_prct = 0
+        if land_id in zonal_out[0].keys():
+            land_prct = zonal_out[0][land_id] / total_pixels
+        l_values.append(land_prct)
+        l_index.append(('Land cover', f'{prefix}{text}_fraction', '-', f'{source}'))
+
+    return l_values,l_index
+
 def zonal_stats_unit_conversion(zonal_out, stat_to_convert, variable, scale, offset):
     '''Takes a zonal_stats output and converts the units of any variable listed in stat_to_convert'''
 
