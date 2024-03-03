@@ -6,10 +6,7 @@ import xarray as xr
 from dateutil.relativedelta import relativedelta
 from osgeo import gdal, osr
 from rasterstats import zonal_stats
-from scipy.stats import circmean, skew, kurtosis
-
-## ------- Attribute dataframe index definition
-
+from scipy.stats import circmean, circstd, skew, kurtosis
 
 ## ------- Collection functions
 def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_mfdataset=False):
@@ -24,6 +21,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     days_per_month = np.array([31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]).reshape(-1, 1) # d month-1
     flip_sign = -1 # -; used to convert PET from negative (by convention this indicates an upward flux) to positive
     kelvin_to_celsius = -273.15
+    pa_per_kpa = 1000 # Pa kPa-1
 
     # Define file locations, depending on if we are dealing with lumped or distributed cases
     if 'lumped' in shp_path:
@@ -51,51 +49,110 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     # Calculate monthly PET in mm
     #      kg m-2 s-1 / kg m-3
     # mm month-1 = kg m-2 s-1 * kg-1 m3 * s d-1 * d month-1 * mm m-1 * -
-    monthly_mean_pet = ds['mper'].groupby('time.month').mean(dim='time') / water_density * seconds_per_day * days_per_month * mm_per_m * flip_sign # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_pet, l_values, l_index, 'pet', 'mm')
+    monthly_mper = ds['mper'].resample(time='1ME').mean().groupby('time.month') 
+    mper_m = monthly_mper.mean() / water_density * seconds_per_day * days_per_month * mm_per_m * flip_sign  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    mper_s = monthly_mper.std() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    l_values, l_index = process_era5_means_to_lists(mper_m, 'mean', l_values, l_index, 'mper', 'mm')
+    l_values, l_index = process_era5_means_to_lists(mper_s, 'std', l_values, l_index, 'mper', 'mm')
         
     # Same for precipitation: [mm month-1]
-    monthly_mean_prc = ds['mtpr'].groupby('time.month').mean(dim='time') / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_prc, l_values, l_index, 'prec', 'mm')
+    monthly_mtpr = ds['mtpr'].resample(time='1ME').mean().groupby('time.month')
+    mtpr_m = monthly_mtpr.mean() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    mtpr_s = monthly_mtpr.std() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    l_values, l_index = process_era5_means_to_lists(mtpr_m, 'mean', l_values, l_index, 'mtpr', 'mm')
+    l_values, l_index = process_era5_means_to_lists(mtpr_s, 'std', l_values, l_index, 'mtpr', 'mm')
     
     # Monthly temperature statistics [C]
-    monthly_mean_tmp = ds['t'].groupby('time.month').mean(dim='time') + kelvin_to_celsius
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_tmp, l_values, l_index, 'tavg', 'C')
+    monthly_tavg = (ds['t'].resample(time='1D').mean().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
+    tavg_m = monthly_tavg.mean()
+    tavg_s = monthly_tavg.std()
+    l_values, l_index = process_era5_means_to_lists(tavg_m, 'mean', l_values, l_index, 'tdavg', 'C')
+    l_values, l_index = process_era5_means_to_lists(tavg_s, 'std', l_values, l_index, 'tdavg', 'C')
     
-    monthly_min_tmp = ds['t'].resample(time='1ME').mean().groupby('time.month').min() + kelvin_to_celsius
-    l_values, l_index = process_era5_means_to_lists(monthly_min_tmp, l_values, l_index, 'tmin', 'C')
+    monthly_tmin = (ds['t'].resample(time='1D').min().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
+    tmin_m = monthly_tmin.mean()
+    tmin_s = monthly_tmin.std()
+    l_values, l_index = process_era5_means_to_lists(tmin_m, 'mean', l_values, l_index, 'tdmin', 'C')
+    l_values, l_index = process_era5_means_to_lists(tmin_m, 'std', l_values, l_index, 'tdmin', 'C')
     
-    monthly_max_tmp = ds['t'].resample(time='1ME').mean().groupby('time.month').max() + kelvin_to_celsius
-    l_values, l_index = process_era5_means_to_lists(monthly_max_tmp, l_values, l_index, 'tmax', 'C')
+    monthly_tmax = (ds['t'].resample(time='1D').max().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
+    tmax_m = monthly_tmax.mean()
+    tmax_s = monthly_tmax.std()
+    l_values, l_index = process_era5_means_to_lists(tmax_m, 'mean', l_values, l_index, 'tdmax', 'C')
+    l_values, l_index = process_era5_means_to_lists(tmax_s, 'std', l_values, l_index, 'tdmax', 'C')
     
     # Monthly shortwave and longwave [W m-2]
-    monthly_mean_sw = ds['msdwswrf'].groupby('time.month').mean(dim='time')
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_sw, l_values, l_index, 'msdwswrf', 'W m^-2')
+    monthly_sw = ds['msdwswrf'].resample(time='1ME').mean().groupby('time.month')
+    sw_m = monthly_sw.mean()
+    sw_s = monthly_sw.std()
+    l_values, l_index = process_era5_means_to_lists(sw_m, 'mean', l_values, l_index, 'msdwswrf', 'W m^-2')
+    l_values, l_index = process_era5_means_to_lists(sw_s, 'std', l_values, l_index, 'msdwswrf', 'W m^-2')
     
-    monthly_mean_lw = ds['msdwlwrf'].groupby('time.month').mean(dim='time')
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_lw, l_values, l_index, 'msdwlwrf', 'W m^-2')
-    
+    monthly_lw = ds['msdwlwrf'].resample(time='1ME').mean().groupby('time.month')
+    lw_m = monthly_lw.mean(dim='time')
+    lw_s = monthly_lw.std(dim='time')
+    l_values, l_index = process_era5_means_to_lists(lw_m, 'mean', l_values, l_index, 'msdwlwrf', 'W m^-2')
+    l_values, l_index = process_era5_means_to_lists(lw_s, 'std', l_values, l_index, 'msdwlwrf', 'W m^-2')
+
     # Surface pressure [Pa]
-    monthly_mean_sp = ds['sp'].groupby('time.month').mean(dim='time')
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_sp, l_values, l_index, 'sp', 'Pa')
+    monthly_sp = ds['sp'].resample(time='1ME').mean().groupby('time.month')
+    sp_m = monthly_sp.mean() / pa_per_kpa # [Pa] > [kPa]
+    sp_s = monthly_sp.std() / pa_per_kpa
+    l_values, l_index = process_era5_means_to_lists(sp_m, 'mean', l_values, l_index, 'sp', 'kPa')
+    l_values, l_index = process_era5_means_to_lists(sp_s, 'std', l_values, l_index, 'sp', 'kPa')
     
     # Humidity [-]
-    monthly_mean_q = ds['q'].groupby('time.month').mean(dim='time') # specific
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_q, l_values, l_index, 'q', 'kg kg^-1')
+    monthly_q = ds['q'].resample(time='1ME').mean().groupby('time.month') # specific
+    q_m = monthly_q.mean()
+    q_s = monthly_q.std()
+    l_values, l_index = process_era5_means_to_lists(q_m, 'mean', l_values, l_index, 'q', 'kg kg^-1')
+    l_values, l_index = process_era5_means_to_lists(q_s, 'std', l_values, l_index, 'q', 'kg kg^-1')
     
-    monthly_mean_rh = ds['rh'].groupby('time.month').mean(dim='time') # relative
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_q, l_values, l_index, 'rh', 'kPa kPa^-1')
+    monthly_rh = ds['rh'].resample(time='1ME').mean().groupby('time.month') # relative
+    rh_m = monthly_rh.mean()
+    rh_s = monthly_rh.std()
+    l_values, l_index = process_era5_means_to_lists(rh_m, 'mean', l_values, l_index, 'rh', 'kPa kPa^-1')
+    l_values, l_index = process_era5_means_to_lists(rh_s, 'std', l_values, l_index, 'rh', 'kPa kPa^-1')
     
     # Wind speed [m s-1]
-    monthly_mean_w = ds['w'].groupby('time.month').mean(dim='time')
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_w, l_values, l_index, 'w', 'm s^-1')
+    monthly_w = ds['w'].resample(time='1ME').mean().groupby('time.month')
+    w_m = monthly_w.mean()
+    w_s = monthly_w.std()
+    l_values, l_index = process_era5_means_to_lists(w_m, 'mean', l_values, l_index, 'w', 'm s^-1')
+    l_values, l_index = process_era5_means_to_lists(w_s, 'std', l_values, l_index, 'w', 'm s^-1')
     
     # Wind direction
-    monthly_mean_phi = ds['phi'].groupby('time.month').apply(circmean_group)
-    l_values, l_index = process_era5_means_to_lists(monthly_mean_phi, l_values, l_index, 'phi', 'degrees')
+    monthly_phi = ds['phi'].resample(time='1ME').apply(circmean_group).groupby('time.month')
+    phi_m = monthly_phi.apply(circmean_group)
+    phi_s = monthly_phi.apply(circstd_group)
+    l_values, l_index = process_era5_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees')
+    l_values, l_index = process_era5_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees')
     
     # --- Long-term statistics (aridity, seasonality, snow)
-    #  We'll derive these later, together with WorldClim-based values
+    # aridity
+    monthly_mper = ds['mper'].resample(time='1ME').mean() * flip_sign
+    monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
+    if (monthly_mtpr == 0).any():
+        print(f'--- WARNING: attributes_from_era5(): adding 1 mm to monthly precipitation to avoid divide by zero error in aridity calculation')
+        monthly_mtpr[(monthly_mtpr == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_ari = (monthly_mper / monthly_mtpr).groupby('time.month')
+    ari_m = monthly_ari.mean()
+    ari_s = monthly_ari.std()
+    l_values, l_index = process_era5_means_to_lists(ari_m, 'mean', l_values, l_index, 'aridity1', '-')
+    l_values, l_index = process_era5_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-')
+
+    # snow
+    ds['snow'] = xr.where(ds['t'] < 273.15, ds['mtpr'],0)
+    monthly_snow = ds['snow'].resample(time='1ME').mean()
+    monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
+    if (monthly_mtpr == 0).any():
+        print(f'--- WARNING: attributes_from_era5(): adding 1 mm to monthly precipitation to avoid divide by zero error in snow calculation. Note that by definition this cannot change the fraction snow result (if there is 0 precip, none of it will fall as snow)')
+        monthly_mtpr[(monthly_mtpr == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_snow = (monthly_snow / monthly_mtpr).groupby('time.month')
+    fsnow_m = monthly_snow.mean()
+    fsnow_s = monthly_snow.std()
+    l_values, l_index = process_era5_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-')
+    l_values, l_index = process_era5_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-')
 
     # --- High-frequency statistics (high/low duration/timing/magnitude)
     #  Everyone does precip. We'll add temperature too as a drought/frost indicator
@@ -215,8 +272,8 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
     # Define file locations
     # Units source: https://www.worldclim.org/data/worldclim21.html
     clim_folder = geo_folder / dataset / 'raw'
-    sub_folders =      ['prec', 'srad',   'tavg', 'tmax', 'tmin', 'vapr', 'wind',   'pet']
-    sub_folder_units = ['mm',   'W m^-2', 'C',    'C',    'C',    'kPa',  'm s^-1', 'mm'] # srad original: kJ m^-2 d^-1. Converted below
+    sub_folders =      ['prec', 'srad',   'tavg', 'tmax', 'tmin', 'vapr', 'wind',   'pet', 'aridity2', 'fracsnow2'] # aridity and fractionsnow have subscript 2 to distinguish them from ERA5 attributes
+    sub_folder_units = ['mm',   'W m^-2', 'C',    'C',    'C',    'kPa',  'm s^-1', 'mm',  '-',       '-']  # srad original: kJ m^-2 d^-1. Converted below
 
     # Loop over the files and calculate the stats
     for sub_folder, sub_folder_unit in zip(sub_folders, sub_folder_units):
@@ -237,7 +294,7 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
             source = 'WorldClim'
             if var == 'pet': source = 'WorldClim (derived, Oudin et al., 2005)'
             index += [('Climate', f'{var}_mean_month_{month}', f'{sub_folder_unit}',  source),
-                      ('Climate', f'{var}_space_stdev_month_{month}', f'{sub_folder_unit}', source)]
+                      ('Climate', f'{var}_std_month_{month}', f'{sub_folder_unit}', source)]
 
     return l_values, index
 
@@ -521,20 +578,22 @@ def create_mean_daily_max_series(ds,var='t'):
 
 
 # Processing function to update the two main lists we're populating
-def process_era5_means_to_lists(da, l_values, l_index, var, unit):
-    '''Takes an xarray data array with monthly means and processes into l_values and l_index lists'''
+def process_era5_means_to_lists(da, stat, l_values, l_index, var, unit):
+    '''Takes an xarray data array with monthly statistics and processes into l_values and l_index lists'''
     for month in range(1,13):
         val = da.sel(month=month).values.flatten()[0]
-        txt = (f'Climate', f'{var}_mean_month_{month:02}', f'{unit}', 'ERA5')
+        txt = (f'Climate', f'{var}_{stat}_month_{month:02}', f'{unit}', 'ERA5')
         l_values += [val] # Needs to be this way because we're appending to a list
         l_index  += [txt]
     return l_values, l_index
 
-# Define a custom function to apply circmean to each group
-# Without this, xarray chokes on dimensions when converting the circmean output back into something with the right month indices
+# Define custom functions to apply circmean and circstd to Xarray group objects
+# Without this, xarray chokes on dimensions when converting the circmean/circstd output 
+#  back into something with the right month indices
 def circmean_group(group):
     return xr.DataArray(circmean(group, high=360, low=0), name='phi')
-
+def circstd_group(group):
+    return xr.DataArray(circstd(group, high=360, low=0), name='phi')
 
 ## ---- LAI
 def filter_lai_files_by_date(files, last_n_years=[], last_n_months=[], last_n_days=[],
@@ -615,7 +674,55 @@ def calculate_monthly_lai_maps(lai_files, des_path):
         des_files.append(des_file)
     return des_files
 
-## --- PET
+## --- WorldClim
+def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
+    
+    '''Calculates aridity and fraction snow maps from WorldClim data'''
+
+    # Find files
+    clim_folder = geo_folder / dataset / 'raw'
+    prc_files = sorted( glob.glob(str(clim_folder / 'prec' / '*.tif')) ) # [mm]
+    pet_files = sorted( glob.glob(str(clim_folder / 'pet' / '*.tif')) ) # [mm]
+    tmp_files = sorted( glob.glob(str(clim_folder / 'tavg' / '*.tif')) ) # [C]
+    
+    # Make the output locations
+    ari_folder = clim_folder / 'aridity2'
+    ari_folder.mkdir(parents=True, exist_ok=True)
+    snow_folder = clim_folder / 'fracsnow2'
+    snow_folder.mkdir(parents=True, exist_ok=True)
+
+    # Loop over files and calculate aridity
+    for prc_file, pet_file, tmp_file in zip(prc_files, pet_files, tmp_files):
+
+        # Define month
+        month = prc_file.split('_')[-1].split('.')[0] # 'wc2.1_30s_prec_01.tif' > '01', ..., '12'
+        month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
+
+        # Load data
+        prc_path = clim_folder / 'prec' / prc_file
+        pet_path = clim_folder / 'pet'  / pet_file
+        tmp_path = clim_folder / 'tavg' / tmp_file      
+        prc = get_geotif_data_as_array(prc_path) # [mm]
+        pet = get_geotif_data_as_array(pet_path) # [mm]
+        tmp = get_geotif_data_as_array(tmp_path) # [C]
+
+        # Calculate variables
+        snow = np.where(tmp < 0, prc, 0) # get snow first, because this needs precip and we'll (possibly) be updating the precip value below
+        if (prc == 0).any():
+            prc[prc == 0] = 1 # add 1 mm to avoid divide by zero errors
+        ari = pet/prc # [-]
+        frac_snow = snow/prc # [-]
+
+        # Define output file name and write to disk
+        ari_name = prc_file.replace('prec','aridity2')
+        ari_file = str(ari_folder / ari_name)
+        write_geotif_sameDomain(prc_path, ari_file, ari)
+        snow_name = prc_file.replace('prec','fracsnow2')
+        snow_file = str(snow_folder / snow_name)
+        write_geotif_sameDomain(prc_path, snow_file, frac_snow)
+    
+    return
+
 def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
 
     '''Calculates PET estimates from WorldClim data, using the Oudin (2005; 10.1016/j.jhydrol.2004.08.026) formulation'''
@@ -657,3 +764,4 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
         pet_name = srad_file.replace('srad','pet')
         pet_file = str(pet_folder / pet_name)
         write_geotif_sameDomain(srad_path, pet_file, pet_month)
+    return
