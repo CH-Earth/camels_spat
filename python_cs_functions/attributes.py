@@ -1,7 +1,9 @@
+import geopandas as gpd
 import glob
 import numpy as np
 import os
 import pandas as pd
+import rasterio
 import xarray as xr
 from dateutil.relativedelta import relativedelta
 from osgeo import gdal, osr
@@ -9,6 +11,47 @@ from rasterstats import zonal_stats
 from scipy.stats import circmean, circstd, skew, kurtosis
 
 ## ------- Collection functions
+def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, l_index):
+    
+    '''Calculates topographic attributes from MERIT data'''
+
+    ## Known values
+    lat = row['Station_lat']
+    lon = row['Station_lon']
+    area= row['Basin_area_km2']
+    src = row['Station_source']
+    l_values.append(lat)
+    l_index.append(('Topography', 'gauge_lat',  'degrees', f'{src}'))
+    l_values.append(lon)
+    l_index.append(('Topography', 'gauge_lon',  'degrees', f'{src}'))
+    l_values.append(area)
+    l_index.append(('Topography', 'basin_area', 'km^2', 'MERIT Hydro'))
+
+    ## RASTERS
+    # Slope and elevation can use zonal stats
+    files = [str(geo_folder / dataset / 'raw'    / 'merit_hydro_elv.tif'),
+             str(geo_folder / dataset / 'slope'  / 'merit_hydro_slope.tif')]
+    attrs = ['merit_hydro_elev', 'merit_hydro_slope']
+    units = ['m.a.s.l.',         'm m-1']
+    stats = ['mean', 'min', 'max', 'std']
+    for tif,att,unit in zip(files,attrs,units):
+        zonal_out = zonal_stats(shp_str, tif, stats=stats)
+        scale,offset = read_scale_and_offset(tif)
+        l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+        l_index += [('Topography', f'{att}_min',  f'{unit}', 'MERIT Hydro'),
+                    ('Topography', f'{att}_mean', f'{unit}', 'MERIT Hydro'),
+                    ('Topography', f'{att}_max',  f'{unit}', 'MERIT Hydro'),
+                    ('Topography', f'{att}_std',  f'{unit}', 'MERIT Hydro')]
+
+    # Aspect needs circular stats
+    tif = str(geo_folder / dataset / 'aspect' / 'merit_hydro_aspect.tif')
+    l_values, l_index = get_aspect_attributes(tif,l_values,l_index) 
+
+    ## VECTOR
+    l_values, l_index = get_river_attributes(riv_str, l_values, l_index, area)
+    
+    return l_values, l_index
+
 def attributes_from_lgrip30(geo_folder, dataset, shp_str, l_values, l_index):
 
     '''Calculates percentage occurrence of all classes in LGRIP30 map'''
@@ -330,6 +373,11 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
     return l_values, index
 
 ## ------- Component functions
+def get_geotif_nodata_value(tif):
+    with rasterio.open(tif) as src:
+        nodata_value = src.nodata
+    return nodata_value
+
 def check_scale_and_offset(tif):
     scale,offset = read_scale_and_offset(tif) # just to check we don't have any scale/offset going on
     if scale is None: scale = 1 # If scale is undefined that means we simply multiply by 1
@@ -614,6 +662,77 @@ def find_durations(condition):
             continue # do nothing
     
     return np.array(durations)
+
+## ---- MERIT
+def get_aspect_attributes(tif,l_values,l_index):
+    '''Calculates circular statistics for MERIT Hydro aspect'''
+
+    # Get data as a masked array - we know there are no-data values outside the catchment boundaries
+    aspect = get_geotif_data_as_array(tif)
+    no_data = get_geotif_nodata_value(tif)
+    masked_aspect = np.ma.masked_array(aspect, aspect == no_data)
+
+    ## Calculate the statistics
+    l_values.append(masked_aspect.min())
+    l_index.append(('Topography', 'merit_hydro_aspect_min',  'degrees', 'MERIT Hydro'))
+    
+    l_values.append(circmean(masked_aspect,high=360))
+    l_index.append(('Topography', 'merit_hydro_aspect_mean',  'degrees', 'MERIT Hydro'))
+
+    l_values.append(circstd(masked_aspect,high=360))
+    l_index.append(('Topography', 'merit_hydro_aspect_std',  'degrees', 'MERIT Hydro'))
+
+    l_values.append(masked_aspect.max())
+    l_index.append(('Topography', 'merit_hydro_aspect_max',  'degrees', 'MERIT Hydro'))
+    
+    return l_values,l_index
+
+def get_river_attributes(riv_str, l_values, l_index, area):
+    
+    '''Calculates topographic attributes from a MERIT Hydro Basins river polygon'''
+
+    # Load shapefiles
+    river = gpd.read_file(riv_str)
+    river = river.set_index('COMID')
+    
+    # Raw data
+    stream_lengths = []
+    headwaters = river[river['maxup'] == 0] # identify reaches with no upstream
+    for COMID in headwaters.index:
+        stream_length = 0
+        while COMID in river.index:
+            stream_length += river.loc[COMID]['lengthkm'] # Add the length of the current segment
+            COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
+        stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
+    
+    # Stats
+    stream_total = river['lengthkm'].sum()
+    stream_lengths = np.array(stream_lengths)
+    l_values.append(stream_lengths.min())
+    l_index.append(('Topography', 'stream_length_min',  'km', 'MERIT Hydro Basins'))
+    l_values.append(stream_lengths.mean())
+    l_index.append(('Topography', 'stream_length_mean',  'km', 'MERIT Hydro Basins'))
+    l_values.append(stream_lengths.max())
+    l_index.append(('Topography', 'stream_length_max',  'km', 'MERIT Hydro Basins'))
+    l_values.append(stream_lengths.std())
+    l_index.append(('Topography', 'stream_length_std',  'km', 'MERIT Hydro Basins'))
+    l_values.append(stream_total)
+    l_index.append(('Topography', 'stream_length_total',  'km', 'MERIT Hydro Basins'))
+    
+    # Order
+    l_values.append(river['order'].max())
+    l_index.append(('Topography', 'steam_order_max',  '-', 'MERIT Hydro Basins'))
+
+    # Derived
+    density = stream_total/area
+    elongation = 2*np.sqrt(area/np.pi)/stream_lengths.max()
+    l_values.append(density)
+    l_index.append(('Topography', 'stream_density',  'km^-1', 'Derived'))
+    l_values.append(elongation)
+    l_index.append(('Topography', 'elongation_ratio','-', 'Derived'))
+    
+    return l_values,l_index
+
 
 ## ---- ERA5
 def calculate_temp_prcp_stats(var, condition, hilo, l_values,l_index,
