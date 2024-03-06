@@ -11,6 +11,31 @@ from rasterstats import zonal_stats
 from scipy.stats import circmean, circstd, skew, kurtosis
 
 ## ------- Collection functions
+def attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index):
+    
+    '''Calculates open water attributes from HydroLAKES'''
+
+    # Load the file
+    lake_str = str(geo_folder / dataset / 'raw'    / 'HydroLAKES_polys_v10_NorthAmerica.shp')
+    lakes = gpd.read_file(lake_str)
+
+    # General stats
+    res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
+    num_lakes = len(lakes)
+    num_resvr = res_mask.sum() 
+    l_values.append(num_lakes)
+    l_index.append(('Open water', 'open_water_number',  '-', 'HydroLAKES'))
+    l_values.append(num_resvr)
+    l_index.append(('Open water', 'known_reservoirs',  '-', 'HydroLAKES'))
+
+    # Summary stats
+    l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'all', l_values, l_index) # All open water
+    l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'all', l_values, l_index)
+    l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'reservoir', l_values, l_index) # Reservoirs only
+    l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'reservoir', l_values, l_index)
+
+    return l_values, l_index
+
 def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, l_index):
     
     '''Calculates topographic attributes from MERIT data'''
@@ -112,12 +137,19 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
         ds = xr.merge([xr.open_dataset(f) for f in era_files])
         ds = ds.load()
     
+    # -- Get the precipitation for hydrologic signature calculations
+    # This avoids having to reload the entire dataset another time
+    ds_precip = ds['mtpr'].copy()    
+    
     # Select whole years only
     #   This avoids issues in cases where we have incomplete whole data years
     #   (e.g. 2000-06-01 to 2007-12-31) in basins with very seasonal weather
     #   (e.g. all precip occurs in Jan, Feb, Mar). By using only full years
     #   we avoid accidentally biasing the attributes.
     ds = subset_dataset_to_max_full_years(ds)
+    num_years = len(ds.groupby('time.year'))
+    l_values.append(num_years)
+    l_index.append( ('Climate', 'num_years_era5 ', 'years', 'ERA5') )
     
     # --- Monthly attributes
     # Calculate monthly PET in mm
@@ -202,7 +234,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     l_values, l_index = process_era5_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees')
     l_values, l_index = process_era5_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees')
     
-    # --- Long-term statistics (aridity, seasonality, snow)
+    # --- Long-term monthly statistics (aridity, seasonality, snow)
     # aridity
     monthly_mper = ds['mper'].resample(time='1ME').mean() * flip_sign
     monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
@@ -227,6 +259,16 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     fsnow_s = monthly_snow.std()
     l_values, l_index = process_era5_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-')
     l_values, l_index = process_era5_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-')
+
+    # --- Annual statistics (aridity, seasonality, snow)
+        
+
+#    yearly_mper = ds['mper'].resample(time='1YE').mean() * flip_sign # Mean indicates to resample each year as that year's mean
+#    yearly_mtpr = ds['mtpr'].resample(time='1YE').mean()
+#    yearly_ari  = yearly_mper / yearly_mtpr
+#    ari_m = yearly_ari.mean()
+#    ari_s = yearly_ari.std()
+    
 
     # --- High-frequency statistics (high/low duration/timing/magnitude)
     #  Everyone does precip. We'll add temperature too as a drought/frost indicator
@@ -279,7 +321,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     l_values,l_index = calculate_temp_prcp_stats('prec',high_condition,'high',l_values,l_index,
                                                  units='days')
 
-    return l_values, l_index
+    return l_values, l_index, ds_precip, ds
 
 
 def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index):
@@ -588,21 +630,22 @@ def write_geotif_sameDomain(src_file,des_file,des_data):
 
     return
 
-def subset_dataset_to_max_full_years(ds, time='time') -> xr.Dataset:
-    '''Takes an xarray dataset and subsets this to the longest stretch of whole years, counting back from the final date'''
+def subset_dataset_to_max_full_years(ds, time='time', res='hour', debug=False) -> xr.Dataset:
 
-    # Find start and end years
-    final_timestamp = pd.Timestamp(ds[time][-1].values)
-    start_year = ds[time][0].dt.year
-    final_year = ds[time][-1].dt.year
-    max_years = (final_year - start_year).values # subtraction returns DataArray, so we need to extract just the array itself
-    
-    # Iteratively try years until we have found something that works, starting at longest possible
-    for duration in range(max_years,-1,-1):
+    # Find final and end years
+    start_year = ds[time][0].dt.year.values
+    final_year = ds[time][-1].dt.year.values
+    final_timestamp = ds[time][-1]
 
-        # Calculate the start datetime of the current duration
-        start_timestamp = final_timestamp - pd.DateOffset(years=duration)
-        print(f'checking {start_timestamp}')
+    # Find the first occurrence of Jan-01 00:00 as start of the subset
+    for year in range(start_year,final_year):
+        
+        # Define the initial timestamp to check
+        if res == 'hour':
+            start_timestamp = pd.Timestamp(year,1,1,0,0,0)
+        elif res == 'day':
+            start_timestamp = pd.Timestamp(year,1,1)
+        if debug: print(f'checking {start_timestamp}')
 
         # Select the subset of the dataset for the current duration
         # Note: if either start or final are not part of the time series,
@@ -612,12 +655,32 @@ def subset_dataset_to_max_full_years(ds, time='time') -> xr.Dataset:
         # Check if we actually selected the duration we requested
         subset_start = pd.Timestamp(subset_ds[time][0].values)
         if subset_start == start_timestamp:
-            break # stop searching. We're counting down the durations, so we have the longest possible one now
+            subset_start_year = year # Keep track of where we start
+            break # stop searching. We've found the first occurrence of Jan-01
+
+    # Find the last occurrence of Dec-31 23:00 as end of the subset
+    for year in range(final_year,subset_start_year,-1):
+
+        # Define the initial timestamp to check
+        if res == 'hour':
+            end_timestamp = pd.Timestamp(year,12,31,23,0,0)
+        elif res == 'day':
+            end_timestamp = pd.Timestamp(year,12,31)
+        if debug: print(f'checking {end_timestamp}')
+
+        # Select the subset of the dataset for the current duration
+        subset_ds = ds.sel(time=slice(start_timestamp, end_timestamp))
+
+        # Check if we actually selected the duration we requested
+        subset_end = pd.Timestamp(subset_ds[time][-1].values)
+        if subset_end == end_timestamp:
+            subset_end_year = year # Keep track of where we start
+            break # stop searching. We've found the first occurrence of Jan-01
 
     # Now check if we have selected a zero-year period
     # This would imply we have less than a full year of data
     # In this case, just return the original data set with a warning
-    if duration == 0:
+    if len(subset_ds) == 0:
         print(f'--- WARNING: subset_dataset_to_max_full_years(): Found no full data years. Returning original DataArray')
         return ds
     else:   
@@ -662,6 +725,38 @@ def find_durations(condition):
             continue # do nothing
     
     return np.array(durations)
+
+## ---- HydroLAKES
+def get_open_water_stats(gdf, att, mask, l_values, l_index):
+    '''Calculates min, mean, max, std and total att ('Lake_area', 'Vol_total'), optionally using a reservoir mask'''
+
+    # Setup
+    if mask == 'all':
+        mask = gdf.index >= 0 # Selects everything if no mask is provided
+        type = 'open_water' # no reservoir mask, hence we're working with lakes
+    elif mask == 'reservoir':
+        mask = gdf['Lake_type'] == 2
+        type = 'reservoir'
+    if att == 'Lake_area':
+        units = 'km^2' # https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf
+        att_d = 'area'
+    elif att == 'Vol_total':
+        units = 'million~m^3' # https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf
+        att_d = 'volume'
+
+    # Stats
+    l_values.append(gdf[mask][att].min())
+    l_index.append(('Open water', f'{type}_{att_d}_min',  f'{units}', 'HydroLAKES'))
+    l_values.append(gdf[mask][att].mean())
+    l_index.append(('Open water', f'{type}_{att_d}_mean',  f'{units}', 'HydroLAKES'))
+    l_values.append(gdf[mask][att].max())
+    l_index.append(('Open water', f'{type}_{att_d}_max',  f'{units}', 'HydroLAKES'))
+    l_values.append(gdf[mask][att].std())
+    l_index.append(('Open water', f'{type}_{att_d}_std',  f'{units}', 'HydroLAKES'))
+    l_values.append(gdf[mask][att].sum()) # total
+    l_index.append(('Open water', f'{type}_{att_d}_total',  f'{units}', 'HydroLAKES'))
+    
+    return l_values, l_index
 
 ## ---- MERIT
 def get_aspect_attributes(tif,l_values,l_index):
