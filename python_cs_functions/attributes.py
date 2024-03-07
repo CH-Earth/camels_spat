@@ -1,3 +1,4 @@
+import baseflow
 import geopandas as gpd
 import glob
 import numpy as np
@@ -11,6 +12,120 @@ from rasterstats import zonal_stats
 from scipy.stats import circmean, circstd, skew, kurtosis
 
 ## ------- Collection functions
+def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
+
+    '''Calculates attributes from GLHYMPS'''
+
+    # Load the file
+    geol_str = str(geo_folder / dataset / 'raw' / 'glhymps.shp')
+    geol = gpd.read_file(geol_str)
+
+    # Rename the columns, because the shortened ones are not very helpful
+    if ('Porosity' in geol.columns) and ('Permeabili' in geol.columns) \
+    and ('Permeabi_1' in geol.columns) and ('Permeabi_2' in geol.columns):
+        geol.rename(columns={'Porosity': 'porosity',   'Permeabili': 'logK_Ferr',
+                             'Permeabi_1': 'logK_Ice', 'Permeabi_2': 'logK_std'}, inplace=True)
+        geol.to_file(geol_str)
+
+    # Porosity
+    l_values.append( geol['porosity'].min() )
+    l_index.append(('Geology', 'porosity_min',  '-', 'GLHYMPS'))
+    l_values.append( geol['porosity'].mean() )
+    l_index.append(('Geology', 'porosity_mean',  '-', 'GLHYMPS'))
+    l_values.append( geol['porosity'].max() )
+    l_index.append(('Geology', 'porosity_max',  '-', 'GLHYMPS'))
+    l_values.append( geol['porosity'].std() )
+    l_index.append(('Geology', 'porosity_std',  '-', 'GLHYMPS'))
+
+    # Permeability
+    l_values.append( geol['logK_Ice'].min() )
+    l_index.append(('Geology', 'log_permeability_min',  'm^2', 'GLHYMPS'))
+    l_values.append( geol['logK_Ice'].mean() )
+    l_index.append(('Geology', 'log_permeability_mean',  'm^2', 'GLHYMPS'))
+    l_values.append( geol['logK_Ice'].max() )
+    l_index.append(('Geology', 'log_permeability_max',  'm^2', 'GLHYMPS'))
+    l_values.append( geol['logK_Ice'].std() )
+    l_index.append(('Geology', 'log_permeability_std',  'm^2', 'GLHYMPS'))
+    
+    return l_values, l_index
+
+def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index):
+    
+    '''Calculates statistics for Pelletier maps'''
+    # See: https://daac.ornl.gov/SOILS/guides/Global_Soil_Regolith_Sediment.html
+
+    # General
+    files = ['upland_hill-slope_regolith_thickness.tif',
+             'upland_hill-slope_soil_thickness.tif',
+             'upland_valley-bottom_and_lowland_sedimentary_deposit_thickness.tif',
+             'average_soil_and_sedimentary-deposit_thickness.tif']
+    attrs = ['regolith_thickness',    'soil_thickness',
+             'sedimentary_thickness', 'average_thickness']
+    units = ['m', 'm', 'm', 'm']
+    stats = ['mean', 'min', 'max', 'std']
+
+    for file,att,unit in zip(files,attrs,units):
+        tif = str( geo_folder / dataset / 'raw' / file )
+        zonal_out = zonal_stats(shp_str, tif, stats=stats)
+        scale,offset = read_scale_and_offset(tif)
+        l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+        l_index += [('Soil', f'{att}_min',  f'{unit}', 'Pelletier'),
+                    ('Soil', f'{att}_mean', f'{unit}', 'Pelletier'),
+                    ('Soil', f'{att}_max',  f'{unit}', 'Pelletier'),
+                    ('Soil', f'{att}_std',  f'{unit}', 'Pelletier')]
+        
+    return l_values,l_index
+
+def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values, l_index):
+    
+    '''Calculates various streamflow signatures'''
+    
+    # Constants
+    seconds_per_minute = 60 # s min-1
+    seconds_per_hour = 60 * seconds_per_minute # s hr-1
+    seconds_per_day = 24 * seconds_per_hour # s d-1
+    water_density = 1000 # kg m-3
+    mm_per_m = 1000 # mm m-1
+    m_per_km = 1000 # m km-1
+    
+    # Find the data source
+    if row['Country'] == 'CAN':
+        source = 'WSC'
+    elif row['Country'] == 'USA':
+        source = 'USGS'
+    
+    # Load observations
+    hyd_file = hyd_folder / f'{basin_id}_daily_flow_observations.nc'
+    hyd = xr.open_dataset(hyd_file)
+    hyd = subset_dataset_to_max_full_years(hyd, res='day', water_year=True)
+    
+    # Convert observations to mm d-1
+    area_km2 = row['Basin_area_km2']
+    area_m2 = area_km2 * m_per_km**2 # [km2] * ([m km-1]^2 = [m2 km-2]) = [m2]
+    hyd['q_obs'] = hyd['q_obs'] * seconds_per_day / area_m2 * mm_per_m # [m3 s-1] * [s d-1] / [m2] * [mm m-1] = [m d-1]
+    
+    # Convert precipitation into mm d-1
+    pre = (pre * seconds_per_hour).resample(time='1D').sum() / water_density * mm_per_m # ([kg m-2 s-1] * [s hr-1]).resample(time='1D').sum() / [kg m-3] * [mm m-1] = [mm d-1]
+    
+    # Match times between hydrologic data and precipitation
+    pre = pre.sel(time=slice(hyd['time'][0].values, hyd['time'][-1].values))
+    assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
+    assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    
+    # Create a water-year time variable
+    hyd['water_year'] = hyd['time'].dt.year.where(hyd['time'].dt.month < 10, hyd['time'].dt.year + 1)
+    pre['water_year'] = pre['time'].dt.year.where(pre['time'].dt.month < 10, pre['time'].dt.year + 1)
+    
+    # Track the data years used
+    num_years = len(hyd.groupby('time.year'))
+    l_values.append(num_years)
+    l_index.append( ('Hydrology', 'num_years_hyd ', 'years', '-') )
+    
+    # Signatures
+    calculate_signatures(hyd, pre, source, l_values, l_index)
+    
+    return l_values, l_index
+
 def attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index):
     
     '''Calculates open water attributes from HydroLAKES'''
@@ -56,8 +171,8 @@ def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, 
     # Slope and elevation can use zonal stats
     files = [str(geo_folder / dataset / 'raw'    / 'merit_hydro_elv.tif'),
              str(geo_folder / dataset / 'slope'  / 'merit_hydro_slope.tif')]
-    attrs = ['merit_hydro_elev', 'merit_hydro_slope']
-    units = ['m.a.s.l.',         'm m-1']
+    attrs = ['elev',     'slope']
+    units = ['m.a.s.l.', 'degrees']
     stats = ['mean', 'min', 'max', 'std']
     for tif,att,unit in zip(files,attrs,units):
         zonal_out = zonal_stats(shp_str, tif, stats=stats)
@@ -151,6 +266,13 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     l_values.append(num_years)
     l_index.append( ('Climate', 'num_years_era5 ', 'years', 'ERA5') )
     
+    # --- Annual statistics (aridity, seasonality, snow)
+#    yearly_mper = ds['mper'].resample(time='1YE').mean() * flip_sign # Mean indicates to resample each year as that year's mean
+#    yearly_mtpr = ds['mtpr'].resample(time='1YE').mean()
+#    yearly_ari  = yearly_mper / yearly_mtpr
+#    ari_m = yearly_ari.mean()
+#    ari_s = yearly_ari.std()
+
     # --- Monthly attributes
     # Calculate monthly PET in mm
     #      kg m-2 s-1 / kg m-3
@@ -158,81 +280,81 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     monthly_mper = ds['mper'].resample(time='1ME').mean().groupby('time.month') 
     mper_m = monthly_mper.mean() / water_density * seconds_per_day * days_per_month * mm_per_m * flip_sign  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
     mper_s = monthly_mper.std() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
-    l_values, l_index = process_era5_means_to_lists(mper_m, 'mean', l_values, l_index, 'mper', 'mm')
-    l_values, l_index = process_era5_means_to_lists(mper_s, 'std', l_values, l_index, 'mper', 'mm')
+    l_values, l_index = process_monthly_means_to_lists(mper_m, 'mean', l_values, l_index, 'mper', 'mm')
+    l_values, l_index = process_monthly_means_to_lists(mper_s, 'std', l_values, l_index, 'mper', 'mm')
         
     # Same for precipitation: [mm month-1]
     monthly_mtpr = ds['mtpr'].resample(time='1ME').mean().groupby('time.month')
     mtpr_m = monthly_mtpr.mean() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
     mtpr_s = monthly_mtpr.std() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
-    l_values, l_index = process_era5_means_to_lists(mtpr_m, 'mean', l_values, l_index, 'mtpr', 'mm')
-    l_values, l_index = process_era5_means_to_lists(mtpr_s, 'std', l_values, l_index, 'mtpr', 'mm')
+    l_values, l_index = process_monthly_means_to_lists(mtpr_m, 'mean', l_values, l_index, 'mtpr', 'mm')
+    l_values, l_index = process_monthly_means_to_lists(mtpr_s, 'std', l_values, l_index, 'mtpr', 'mm')
     
     # Monthly temperature statistics [C]
     monthly_tavg = (ds['t'].resample(time='1D').mean().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
     tavg_m = monthly_tavg.mean()
     tavg_s = monthly_tavg.std()
-    l_values, l_index = process_era5_means_to_lists(tavg_m, 'mean', l_values, l_index, 'tdavg', 'C')
-    l_values, l_index = process_era5_means_to_lists(tavg_s, 'std', l_values, l_index, 'tdavg', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tavg_m, 'mean', l_values, l_index, 'tdavg', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tavg_s, 'std', l_values, l_index, 'tdavg', 'C')
     
     monthly_tmin = (ds['t'].resample(time='1D').min().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
     tmin_m = monthly_tmin.mean()
     tmin_s = monthly_tmin.std()
-    l_values, l_index = process_era5_means_to_lists(tmin_m, 'mean', l_values, l_index, 'tdmin', 'C')
-    l_values, l_index = process_era5_means_to_lists(tmin_m, 'std', l_values, l_index, 'tdmin', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'mean', l_values, l_index, 'tdmin', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'std', l_values, l_index, 'tdmin', 'C')
     
     monthly_tmax = (ds['t'].resample(time='1D').max().resample(time='1ME').mean() + kelvin_to_celsius).groupby('time.month')
     tmax_m = monthly_tmax.mean()
     tmax_s = monthly_tmax.std()
-    l_values, l_index = process_era5_means_to_lists(tmax_m, 'mean', l_values, l_index, 'tdmax', 'C')
-    l_values, l_index = process_era5_means_to_lists(tmax_s, 'std', l_values, l_index, 'tdmax', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tmax_m, 'mean', l_values, l_index, 'tdmax', 'C')
+    l_values, l_index = process_monthly_means_to_lists(tmax_s, 'std', l_values, l_index, 'tdmax', 'C')
     
     # Monthly shortwave and longwave [W m-2]
     monthly_sw = ds['msdwswrf'].resample(time='1ME').mean().groupby('time.month')
     sw_m = monthly_sw.mean()
     sw_s = monthly_sw.std()
-    l_values, l_index = process_era5_means_to_lists(sw_m, 'mean', l_values, l_index, 'msdwswrf', 'W m^-2')
-    l_values, l_index = process_era5_means_to_lists(sw_s, 'std', l_values, l_index, 'msdwswrf', 'W m^-2')
+    l_values, l_index = process_monthly_means_to_lists(sw_m, 'mean', l_values, l_index, 'msdwswrf', 'W m^-2')
+    l_values, l_index = process_monthly_means_to_lists(sw_s, 'std', l_values, l_index, 'msdwswrf', 'W m^-2')
     
     monthly_lw = ds['msdwlwrf'].resample(time='1ME').mean().groupby('time.month')
     lw_m = monthly_lw.mean(dim='time')
     lw_s = monthly_lw.std(dim='time')
-    l_values, l_index = process_era5_means_to_lists(lw_m, 'mean', l_values, l_index, 'msdwlwrf', 'W m^-2')
-    l_values, l_index = process_era5_means_to_lists(lw_s, 'std', l_values, l_index, 'msdwlwrf', 'W m^-2')
+    l_values, l_index = process_monthly_means_to_lists(lw_m, 'mean', l_values, l_index, 'msdwlwrf', 'W m^-2')
+    l_values, l_index = process_monthly_means_to_lists(lw_s, 'std', l_values, l_index, 'msdwlwrf', 'W m^-2')
 
     # Surface pressure [Pa]
     monthly_sp = ds['sp'].resample(time='1ME').mean().groupby('time.month')
     sp_m = monthly_sp.mean() / pa_per_kpa # [Pa] > [kPa]
     sp_s = monthly_sp.std() / pa_per_kpa
-    l_values, l_index = process_era5_means_to_lists(sp_m, 'mean', l_values, l_index, 'sp', 'kPa')
-    l_values, l_index = process_era5_means_to_lists(sp_s, 'std', l_values, l_index, 'sp', 'kPa')
+    l_values, l_index = process_monthly_means_to_lists(sp_m, 'mean', l_values, l_index, 'sp', 'kPa')
+    l_values, l_index = process_monthly_means_to_lists(sp_s, 'std', l_values, l_index, 'sp', 'kPa')
     
     # Humidity [-]
     monthly_q = ds['q'].resample(time='1ME').mean().groupby('time.month') # specific
     q_m = monthly_q.mean()
     q_s = monthly_q.std()
-    l_values, l_index = process_era5_means_to_lists(q_m, 'mean', l_values, l_index, 'q', 'kg kg^-1')
-    l_values, l_index = process_era5_means_to_lists(q_s, 'std', l_values, l_index, 'q', 'kg kg^-1')
+    l_values, l_index = process_monthly_means_to_lists(q_m, 'mean', l_values, l_index, 'q', 'kg kg^-1')
+    l_values, l_index = process_monthly_means_to_lists(q_s, 'std', l_values, l_index, 'q', 'kg kg^-1')
     
     monthly_rh = ds['rh'].resample(time='1ME').mean().groupby('time.month') # relative
     rh_m = monthly_rh.mean()
     rh_s = monthly_rh.std()
-    l_values, l_index = process_era5_means_to_lists(rh_m, 'mean', l_values, l_index, 'rh', 'kPa kPa^-1')
-    l_values, l_index = process_era5_means_to_lists(rh_s, 'std', l_values, l_index, 'rh', 'kPa kPa^-1')
+    l_values, l_index = process_monthly_means_to_lists(rh_m, 'mean', l_values, l_index, 'rh', 'kPa kPa^-1')
+    l_values, l_index = process_monthly_means_to_lists(rh_s, 'std', l_values, l_index, 'rh', 'kPa kPa^-1')
     
     # Wind speed [m s-1]
     monthly_w = ds['w'].resample(time='1ME').mean().groupby('time.month')
     w_m = monthly_w.mean()
     w_s = monthly_w.std()
-    l_values, l_index = process_era5_means_to_lists(w_m, 'mean', l_values, l_index, 'w', 'm s^-1')
-    l_values, l_index = process_era5_means_to_lists(w_s, 'std', l_values, l_index, 'w', 'm s^-1')
+    l_values, l_index = process_monthly_means_to_lists(w_m, 'mean', l_values, l_index, 'w', 'm s^-1')
+    l_values, l_index = process_monthly_means_to_lists(w_s, 'std', l_values, l_index, 'w', 'm s^-1')
     
     # Wind direction
     monthly_phi = ds['phi'].resample(time='1ME').apply(circmean_group).groupby('time.month')
     phi_m = monthly_phi.apply(circmean_group)
     phi_s = monthly_phi.apply(circstd_group)
-    l_values, l_index = process_era5_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees')
-    l_values, l_index = process_era5_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees')
+    l_values, l_index = process_monthly_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees')
+    l_values, l_index = process_monthly_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees')
     
     # --- Long-term monthly statistics (aridity, seasonality, snow)
     # aridity
@@ -244,8 +366,8 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     monthly_ari = (monthly_mper / monthly_mtpr).groupby('time.month')
     ari_m = monthly_ari.mean()
     ari_s = monthly_ari.std()
-    l_values, l_index = process_era5_means_to_lists(ari_m, 'mean', l_values, l_index, 'aridity1', '-')
-    l_values, l_index = process_era5_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-')
+    l_values, l_index = process_monthly_means_to_lists(ari_m, 'mean', l_values, l_index, 'aridity1', '-')
+    l_values, l_index = process_monthly_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-')
 
     # snow
     ds['snow'] = xr.where(ds['t'] < 273.15, ds['mtpr'],0)
@@ -257,19 +379,9 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     monthly_snow = (monthly_snow / monthly_mtpr).groupby('time.month')
     fsnow_m = monthly_snow.mean()
     fsnow_s = monthly_snow.std()
-    l_values, l_index = process_era5_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-')
-    l_values, l_index = process_era5_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-')
-
-    # --- Annual statistics (aridity, seasonality, snow)
-        
-
-#    yearly_mper = ds['mper'].resample(time='1YE').mean() * flip_sign # Mean indicates to resample each year as that year's mean
-#    yearly_mtpr = ds['mtpr'].resample(time='1YE').mean()
-#    yearly_ari  = yearly_mper / yearly_mtpr
-#    ari_m = yearly_ari.mean()
-#    ari_s = yearly_ari.std()
+    l_values, l_index = process_monthly_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-')
+    l_values, l_index = process_monthly_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-')  
     
-
     # --- High-frequency statistics (high/low duration/timing/magnitude)
     #  Everyone does precip. We'll add temperature too as a drought/frost indicator
     #  ERA5 only
@@ -630,21 +742,33 @@ def write_geotif_sameDomain(src_file,des_file,des_data):
 
     return
 
-def subset_dataset_to_max_full_years(ds, time='time', res='hour', debug=False) -> xr.Dataset:
+def subset_dataset_to_max_full_years(ds, time='time', res='hour', water_year=False, debug=False) -> xr.Dataset:
 
     # Find final and end years
     start_year = ds[time][0].dt.year.values
     final_year = ds[time][-1].dt.year.values
     final_timestamp = ds[time][-1]
 
+    # Set how a year is defined
+    if water_year: # Oct-1 to Sep-30
+        start_month = 10
+        start_day   = 1
+        final_month = 9
+        final_day   = 30
+    else: # Jan-1 to Dec-31
+        start_month = 1
+        start_day   = 1
+        final_month = 12
+        final_day   = 31
+
     # Find the first occurrence of Jan-01 00:00 as start of the subset
     for year in range(start_year,final_year):
         
         # Define the initial timestamp to check
         if res == 'hour':
-            start_timestamp = pd.Timestamp(year,1,1,0,0,0)
+            start_timestamp = pd.Timestamp(year,start_month,start_day,0,0,0)
         elif res == 'day':
-            start_timestamp = pd.Timestamp(year,1,1)
+            start_timestamp = pd.Timestamp(year,start_month,start_day)
         if debug: print(f'checking {start_timestamp}')
 
         # Select the subset of the dataset for the current duration
@@ -663,9 +787,9 @@ def subset_dataset_to_max_full_years(ds, time='time', res='hour', debug=False) -
 
         # Define the initial timestamp to check
         if res == 'hour':
-            end_timestamp = pd.Timestamp(year,12,31,23,0,0)
+            end_timestamp = pd.Timestamp(year,final_month,final_day,23,0,0)
         elif res == 'day':
-            end_timestamp = pd.Timestamp(year,12,31)
+            end_timestamp = pd.Timestamp(year,final_month,final_day)
         if debug: print(f'checking {end_timestamp}')
 
         # Select the subset of the dataset for the current duration
@@ -726,6 +850,162 @@ def find_durations(condition):
     
     return np.array(durations)
 
+## ---- HYDROLOGY
+def calculate_flow_period_stats(var, condition, hilo, l_values, l_index,
+                                dataset='ERA5', units='hours', category='Climate'):
+    
+    '''Calculates frequency (mean), duration (mean, median, skew, kurtosis) and
+        timing of periods identified with a certain condition'''
+    
+    # Constants. We want everything in [days] for consistency with original CAMELS
+    hours_per_day = 24 # [hours day-1]
+    days_per_year = 365.25 # [days year-1]
+    
+    # Calculate frequencies
+    freq = condition.mean(dim='time') * days_per_year # [-] * [days year-1]
+    l_values.append(float(freq.values))
+    l_index.append( (f'{category}', f'{hilo}_{var}_freq', 'days year^-1', dataset) )
+    
+    # Calculate duration statistics
+    durations = find_durations(condition) # [time steps]
+    if len(durations) == 0:
+        dur_mean = 0
+        dur_med = 0
+        dur_skew = 0
+        dur_kur = 0
+    else:
+        dur_mean = np.mean(durations)
+        dur_med = np.median(durations)
+        dur_skew = skew(durations)
+        dur_kur = kurtosis(durations)
+    l_values.append(dur_mean) # [days]
+    l_index.append((f'{category}', f'{hilo}_{var}_dur_mean', 'days', dataset) ) # Consistency with
+    l_values.append(dur_med) # [days]
+    l_index.append((f'{category}', f'{hilo}_{var}_dur_median', 'days', dataset) )
+    l_values.append(dur_skew) # [-]
+    l_index.append((f'{category}', f'{hilo}_{var}_dur_skew', '-', dataset) )
+    l_values.append(dur_kur) # [-]
+    l_index.append((f'{category}', f'{hilo}_{var}_dur_kurtosis', '-', dataset) )
+    
+    # Calculate timing statistic
+    condition['season'] = ('time', 
+        [get_season(month) for month in condition['time.month'].values]) # add seasons
+    season_groups = condition.groupby('season')
+    season_list   = list(season_groups.groups.keys())
+    max_season_id = int(season_groups.sum().argmax(dim='season').values) # find season with most True values
+    l_values.append(season_list[max_season_id]) # add season abbrev
+    l_index.append( (f'{category}', f'{hilo}_{var}_timing', 'season', dataset) )
+    
+    return l_values, l_index
+
+def calculate_signatures(hyd, pre, source, l_values, l_index):
+    '''Calculates various signatures'''
+    
+    ## LONG-TERM STATISTICS
+    # Mean daily discharge
+    daily_mean_q = hyd['q_obs'].groupby(hyd['water_year']).mean() # .mean() of daily values gives us [mm d-1]
+    mean_q_m = daily_mean_q.mean()
+    mean_q_s = daily_mean_q.std()
+    l_values.append(float(mean_q_m.values))
+    l_index.append( ('Hydrology', 'daily_discharge_mean', 'mm d^-1', f'{source}') )
+    l_values.append(float(mean_q_s.values))
+    l_index.append( ('Hydrology', 'daily_discharge_std', 'mm d^-1', f'{source}') )
+    
+    # Mean monthly flows
+    monthly_q = hyd['q_obs'].resample(time='1ME').mean().groupby('time.month')
+    monthly_m = monthly_q.mean()
+    monthly_s = monthly_q.std()
+    l_values, l_index = process_monthly_means_to_lists(monthly_m, 'mean', l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
+    l_values, l_index = process_monthly_means_to_lists(monthly_s, 'std',  l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
+    
+    # Runoff ratio
+    daily_mean_p = pre.groupby(hyd['water_year']).mean()
+    yearly_rr = daily_mean_q/daily_mean_p
+    rr_m = yearly_rr.mean()
+    rr_s = yearly_rr.std()
+    l_values.append(float(rr_m.values))
+    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, ERA5') )
+    l_values.append(float(rr_s.values))
+    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, ERA5') )
+    
+    # Streamflow elasticity
+    q_elas = np.median(((daily_mean_q - daily_mean_q.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q.mean()))
+    l_values.append(q_elas)
+    l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, ERA5') )
+    
+    # Slope of FDC
+    groups = hyd['q_obs'].groupby(hyd['water_year'])
+    slopes = []
+    for year,group in groups:
+        flows = group.values.copy()
+        flows.sort()
+        flows = np.log(flows)
+        slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+        slopes.append(slope)
+    slopes = np.array(slopes)
+    slope_m = slopes.mean()
+    slope_s = slopes.std()
+    
+    l_values.append(slope_m)
+    l_index.append( ('Hydrology', 'fdc_slope_mean', '-', f'{source}') )
+    l_values.append(slope_s)
+    l_index.append( ('Hydrology', 'fdc_slope_std', '-', f'{source}') )
+    
+    # Baseflow index
+    rec,_ = baseflow.separation(hyd['q_obs'].values, method='Eckhardt') # Find baseflow with Eckhardt filter
+    tmp = xr.DataArray(rec['Eckhardt'], dims='time', coords={'time': hyd['time']}) # Prepare a new variable to put in 'hyd'
+    hyd['q_bas'] = tmp
+    daily_mean_qbase = hyd['q_bas'].groupby(hyd['water_year']).mean()
+    bfi_m = (daily_mean_qbase / daily_mean_q).mean()
+    bfi_s = (daily_mean_qbase / daily_mean_q).std()
+    l_values.append(float(bfi_m.values))
+    l_index.append( ('Hydrology', 'bfi_mean', '-', f'{source}') )
+    l_values.append(float(bfi_s.values))
+    l_index.append( ('Hydrology', 'bfi_std', '-', f'{source}') )
+    
+    # Half-flow date
+    tmp_cum_flow = hyd['q_obs'].groupby(hyd['water_year']).cumsum() # Cumulative flow per water year
+    tmp_sum_flow = hyd['q_obs'].groupby(hyd['water_year']).sum() # Total flow per water year
+    tmp_frc_flow = tmp_cum_flow.groupby(hyd['water_year']) / tmp_sum_flow # Fractional flow per water year
+    groups = tmp_frc_flow.groupby(hyd['water_year'])
+    dates = []
+    for year,group in groups:
+        hdf = group[group > 0.5][0]['time'].values
+        dates.append(pd.Timestamp(hdf).dayofyear)
+    dates = np.array(dates)
+    hdf_m = circmean(dates, high=366)
+    hdf_s = circstd(dates, high=366)
+    l_values.append(hdf_m)
+    l_index.append( ('Hydrology', 'hfd_mean', 'day of year', f'{source}') )
+    l_values.append(hdf_s)
+    l_index.append( ('Hydrology', 'hfd_std', 'day of year', f'{source}') )
+    
+    # Quantiles
+    groups = hyd['q_obs'].groupby(hyd['water_year'])
+    for quantile in [0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+        q_m = groups.quantile(quantile).mean()
+        q_s = groups.quantile(quantile).std()
+        l_values.append(float(q_m.values))
+        l_index.append(('Hydrology', f'q{int(quantile*100)}_mean', 'mm day^-1', f'{source}'))
+        l_values.append(float(q_s.values))
+        l_index.append(('Hydrology', f'q{int(quantile*100)}_std', 'mm day^-1', f'{source}'))
+    
+    # Durations
+    variable  = 'q_obs'
+    no_flow_threshold = 0 # mm d-1
+    no_flow_condition = hyd[variable] < no_flow_threshold
+    l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    
+    low_flow_threshold = 0.2 * hyd['q_obs'].mean() # mm d-1
+    low_flow_condition = hyd[variable] < low_flow_threshold
+    l_values,l_index   = calculate_flow_period_stats('flow',low_flow_condition,'low',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    
+    high_flow_threshold = 9 * hyd['q_obs'].median() # mm d-1
+    high_flow_condition = hyd[variable] > high_flow_threshold
+    l_values,l_index    = calculate_flow_period_stats('flow',high_flow_condition,'high',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    
+    return l_values,l_index
+
 ## ---- HydroLAKES
 def get_open_water_stats(gdf, att, mask, l_values, l_index):
     '''Calculates min, mean, max, std and total att ('Lake_area', 'Vol_total'), optionally using a reservoir mask'''
@@ -769,16 +1049,16 @@ def get_aspect_attributes(tif,l_values,l_index):
 
     ## Calculate the statistics
     l_values.append(masked_aspect.min())
-    l_index.append(('Topography', 'merit_hydro_aspect_min',  'degrees', 'MERIT Hydro'))
+    l_index.append(('Topography', 'aspect_min',  'degrees', 'MERIT Hydro'))
     
     l_values.append(circmean(masked_aspect,high=360))
-    l_index.append(('Topography', 'merit_hydro_aspect_mean',  'degrees', 'MERIT Hydro'))
+    l_index.append(('Topography', 'aspect_mean',  'degrees', 'MERIT Hydro'))
 
     l_values.append(circstd(masked_aspect,high=360))
-    l_index.append(('Topography', 'merit_hydro_aspect_std',  'degrees', 'MERIT Hydro'))
+    l_index.append(('Topography', 'aspect_std',  'degrees', 'MERIT Hydro'))
 
     l_values.append(masked_aspect.max())
-    l_index.append(('Topography', 'merit_hydro_aspect_max',  'degrees', 'MERIT Hydro'))
+    l_index.append(('Topography', 'aspect_max',  'degrees', 'MERIT Hydro'))
     
     return l_values,l_index
 
@@ -859,10 +1139,16 @@ def calculate_temp_prcp_stats(var, condition, hilo, l_values,l_index,
     l_index.append( ('Climate', f'{hilo}_{var}_dur_kurtosis', '-', dataset) )
 
     # Calculate timing statistic
-    condition['season'] = ('time', 
-        [get_season(month) for month in condition['time.month'].values]) # add seasons
-    max_season_id = condition.groupby('season').sum().argmax(dim='season') # find season with most True values
-    l_values.append(condition.season[max_season_id].values[0]) # add season abbrev
+#    condition['season'] = ('time', 
+#        [get_season(month) for month in condition['time.month'].values]) # add seasons
+#    max_season_id = condition.groupby('season').sum().argmax(dim='season') # find season with most True values
+#    l_values.append(condition.season[max_season_id].values[0]) # add season abbrev
+#    l_index.append( ('Climate', f'{hilo}_{var}_timing', 'season', dataset) )
+    condition['season'] = ('time', [get_season(month) for month in condition['time.month'].values]) # add seasons
+    season_groups = condition.groupby('season')
+    season_list   = list(season_groups.groups.keys())
+    max_season_id = int(season_groups.sum().argmax(dim='season').values) # find season with most True values
+    l_values.append(season_list[max_season_id]) # add season abbrev
     l_index.append( ('Climate', f'{hilo}_{var}_timing', 'season', dataset) )
 
     return l_values, l_index
@@ -905,11 +1191,11 @@ def create_mean_daily_max_series(ds,var='t'):
 
 
 # Processing function to update the two main lists we're populating
-def process_era5_means_to_lists(da, stat, l_values, l_index, var, unit):
+def process_monthly_means_to_lists(da, stat, l_values, l_index, var, unit, category='Climate', source='ERA5'):
     '''Takes an xarray data array with monthly statistics and processes into l_values and l_index lists'''
     for month in range(1,13):
         val = da.sel(month=month).values.flatten()[0]
-        txt = (f'Climate', f'{var}_{stat}_month_{month:02}', f'{unit}', 'ERA5')
+        txt = (f'{category}', f'{var}_{stat}_month_{month:02}', f'{unit}', f'{source}')
         l_values += [val] # Needs to be this way because we're appending to a list
         l_index  += [txt]
     return l_values, l_index
