@@ -10,8 +10,35 @@ from dateutil.relativedelta import relativedelta
 from osgeo import gdal, osr
 from rasterstats import zonal_stats
 from scipy.stats import circmean, circstd, skew, kurtosis
+from scipy.optimize import curve_fit
 
 ## ------- Collection functions
+def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
+
+    '''Calculates attributes from SOILGRIDS maps'''
+
+    # File specifiction
+    sub_folders = ['bdod',     'cfvo',       'clay',    'sand',    'silt',    'soc']
+    units       = ['cg cm^-3', 'cm^3 dm^-3', 'g kg^-1', 'g kg^-1', 'g kg^-1', 'dg kg^-1']
+    depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm']
+    fields = ['mean', 'uncertainty']
+    stats = ['mean', 'min', 'max', 'std']
+    
+    # Loop over the files and calculate stats
+    for sub_folder, unit in zip(sub_folders, units):
+        for depth in depths:
+            for field in fields:
+                tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
+                zonal_out = zonal_stats(shp_str, tif, stats=stats)
+                scale,offset = csa.read_scale_and_offset(tif)
+                l_values = csa.update_values_list(l_values, stats, zonal_out, scale, offset)
+                l_index += [('Soil', f'{sub_folder}_{depth}_{stat}_min',  f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{stat}_mean', f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{stat}_max',  f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{stat}_std',  f'{unit}', 'SOILGRIDS')]
+
+    return l_values, l_index
+
 def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
 
     '''Calculates attributes from GLHYMPS'''
@@ -131,7 +158,7 @@ def attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index):
     '''Calculates open water attributes from HydroLAKES'''
 
     # Load the file
-    lake_str = str(geo_folder / dataset / 'raw'    / 'HydroLAKES_polys_v10_NorthAmerica.shp')
+    lake_str = str(geo_folder / dataset / 'raw' / 'HydroLAKES_polys_v10_NorthAmerica.shp')
     lakes = gpd.read_file(lake_str)
 
     # General stats
@@ -233,6 +260,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     seconds_per_hour = 60*60 # s h-1
     seconds_per_day = seconds_per_hour*24 # s d-1
     days_per_month = np.array([31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]).reshape(-1, 1) # d month-1
+    days_per_year = days_per_month.sum()
     flip_sign = -1 # -; used to convert PET from negative (by convention this indicates an upward flux) to positive
     kelvin_to_celsius = -273.15
     pa_per_kpa = 1000 # Pa kPa-1
@@ -266,12 +294,50 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     l_values.append(num_years)
     l_index.append( ('Climate', 'num_years_era5 ', 'years', 'ERA5') )
     
-    # --- Annual statistics (aridity, seasonality, snow)
-#    yearly_mper = ds['mper'].resample(time='1YE').mean() * flip_sign # Mean indicates to resample each year as that year's mean
-#    yearly_mtpr = ds['mtpr'].resample(time='1YE').mean()
-#    yearly_ari  = yearly_mper / yearly_mtpr
-#    ari_m = yearly_ari.mean()
-#    ari_s = yearly_ari.std()
+    # --- Annual statistics (P, PET, T, aridity, seasonality, temperature, snow)
+    # P
+    yearly_mtpr = ds['mtpr'].resample(time='1YE').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_mtpr.mean().values)
+    l_index.append(('Climate', 'mtpr_mean', 'mm', 'ERA5'))
+    l_values.append(yearly_mtpr.std().values)
+    l_index.append(('Climate', 'mtpr_std', 'mm', 'ERA5'))
+    
+    # PET
+    yearly_mper = ds['mper'].resample(time='1YE').mean() * flip_sign * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_mper.mean().values)
+    l_index.append(('Climate', 'mper_mean', 'mm', 'ERA5'))
+    l_values.append(yearly_mper.std().values)
+    l_index.append(('Climate', 'mper_std', 'mm', 'ERA5'))
+    
+    # T
+    yearly_tavg = ds['t'].resample(time='1YE').mean() + kelvin_to_celsius # K > C
+    l_values.append(yearly_tavg.mean().values)
+    l_index.append(('Climate', 'tdavg_mean', 'C', 'ERA5'))
+    l_values.append(yearly_tavg.std().values)
+    l_index.append(('Climate', 'tdavg_std', 'C', 'ERA5'))
+    
+    # Aridity
+    yearly_ari  = yearly_mper / yearly_mtpr
+    l_values.append(yearly_ari.mean().values)
+    l_index.append(('Climate', 'aridity1_mean', '-', 'ERA5'))
+    l_values.append(yearly_ari.std().values)
+    l_index.append(('Climate', 'aridity1_std', '-', 'ERA5'))
+
+    # Snow
+    ds['snow'] = xr.where(ds['t'] < 273.15, ds['mtpr'],0) # rates: kg m-2 s-1
+    yearly_snow = ds['snow'].resample(time='1YE').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    yearly_fs   = yearly_snow / yearly_mtpr
+    l_values.append(yearly_fs.mean().values)
+    l_index.append(('Climate', 'fracsnow1_mean', '-', 'ERA5'))
+    l_values.append(yearly_fs.std().values)
+    l_index.append(('Climate', 'fracsnow1_std', '-', 'ERA5'))
+
+    # Seasonality
+    seasonality = find_climate_seasonality_era5(ds,use_typical_cycle=False)
+    l_values.append(seasonality.mean())
+    l_index.append(('Climate', 'seasonality1_mean', '-', 'ERA5'))
+    l_values.append(seasonality.std())
+    l_index.append(('Climate', 'seasonality1_std', '-', 'ERA5'))
 
     # --- Monthly attributes
     # Calculate monthly PET in mm
@@ -370,7 +436,6 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     l_values, l_index = process_monthly_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-')
 
     # snow
-    ds['snow'] = xr.where(ds['t'] < 273.15, ds['mtpr'],0)
     monthly_snow = ds['snow'].resample(time='1ME').mean()
     monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
     if (monthly_mtpr == 0).any():
@@ -493,7 +558,7 @@ def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index
     
     return l_values, index
 
-def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
+def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, l_index):
 
     '''Calculates mean and stdv for tifs of monthly WorldClim values'''
 
@@ -502,6 +567,9 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
     clim_folder = geo_folder / dataset / 'raw'
     sub_folders =      ['prec', 'srad',   'tavg', 'tmax', 'tmin', 'vapr', 'wind',   'pet', 'aridity2', 'fracsnow2'] # aridity and fractionsnow have subscript 2 to distinguish them from ERA5 attributes
     sub_folder_units = ['mm',   'W m^-2', 'C',    'C',    'C',    'kPa',  'm s^-1', 'mm',  '-',       '-']  # srad original: kJ m^-2 d^-1. Converted below
+
+    # Get the annual values
+    l_values,l_index = get_annual_worldclim_attributes(clim_folder, shp_str, 'prec', 'tavg', 'pet', 'snow2', l_values, l_index)
 
     # Loop over the files and calculate the stats
     for sub_folder, sub_folder_unit in zip(sub_folders, sub_folder_units):
@@ -521,12 +589,82 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, index):
             var = os.path.basename(month_file).split('_')[2]
             source = 'WorldClim'
             if var == 'pet': source = 'WorldClim (derived, Oudin et al., 2005)'
-            index += [('Climate', f'{var}_mean_month_{month}', f'{sub_folder_unit}',  source),
-                      ('Climate', f'{var}_std_month_{month}', f'{sub_folder_unit}', source)]
+            l_index += [('Climate', f'{var}_mean_month_{month}', f'{sub_folder_unit}',  source),
+                        ('Climate', f'{var}_std_month_{month}', f'{sub_folder_unit}', source)]
 
-    return l_values, index
+    return l_values, l_index
 
 ## ------- Component functions
+# Sine functions for P and T as per Woods (2009), Eq. 2 and 3. Period = 1 year
+def sine_function_temp(x, mean, delta, phase, period=1):
+    result = mean + delta * np.sin(2*np.pi*(x-phase)/period)
+    return result
+
+def sine_function_prec(x, mean, delta, phase, period=1):
+    result = mean * (1+ delta* np.sin(2*np.pi*(x-phase)/period))
+    results = np.where(result < 0, 0, result)
+    return result
+
+# Combined function for ERA5
+def fit_climate_sines(t,p):
+
+    # Define the x-coordinate as daily steps as fractions of a year
+    x  = np.arange(0,len(p))/len(p) # days as fraction of a year
+    
+    # Fit the temperature sine
+    t_mean   = float(t.mean())
+    t_delta  = float(t.max()-t.min())
+    t_phase  = 0.5
+    initial_guess = [t_mean, t_delta, t_phase]
+    t_pars, _ = curve_fit(sine_function_temp, x, t, p0=initial_guess)
+
+    # Fit the precipitation sine
+    p_mean   = float(p.mean())
+    p_delta  = float(p.max()-p.min()) / float(p.mean())
+    p_phase  = 0.5
+    initial_guess = [p_mean, p_delta, p_phase]
+    p_pars, _ = curve_fit(sine_function_prec, x, p, p0=initial_guess)
+
+    # Compute seasonality as per Eq. 14 in Woods (2009)
+    return p_pars[1]*np.sign(t_pars[1])*np.cos(2*np.pi*(p_pars[2]-t_pars[2])/1)
+
+# Individual functions for stacked arrays in WorldClim
+def fit_temp_sines(t):
+
+    # Short-circuit the computation if we have only masked values
+    if np.ma.getmaskarray(t).all():
+        return [np.nan, np.nan, np.nan]
+    
+    # Define the x-coordinate as daily steps as fractions of a year
+    x  = np.arange(0,len(t))/len(t) # days as fraction of a year
+    
+    # Fit the temperature sine
+    t_mean   = float(t.mean())
+    t_delta  = float(t.max()-t.min())
+    t_phase  = 0.5
+    initial_guess = [t_mean, t_delta, t_phase]
+    t_pars, _ = curve_fit(sine_function_temp, x, t, p0=initial_guess)
+
+    return t_pars
+
+def fit_prec_sines(p):
+
+    # Short-circuit the computation if we have only masked values
+    if np.ma.getmaskarray(p).all():
+        return [np.nan, np.nan, np.nan]
+    
+    # Define the x-coordinate as daily steps as fractions of a year
+    x  = np.arange(0,len(p))/len(p) # days as fraction of a year
+
+    # Fit the precipitation sine
+    p_mean   = float(p.mean())
+    p_delta  = float(p.max()-p.min()) / float(p.mean())
+    p_phase  = 0.5
+    initial_guess = [p_mean, p_delta, p_phase]
+    p_pars, _ = curve_fit(sine_function_prec, x, p, p0=initial_guess)
+
+    return p_pars
+
 def get_geotif_nodata_value(tif):
     with rasterio.open(tif) as src:
         nodata_value = src.nodata
@@ -702,7 +840,7 @@ def enforce_data_range(data,min,max,replace_with='limit'):
     
     return data
 
-def write_geotif_sameDomain(src_file,des_file,des_data):
+def write_geotif_sameDomain(src_file,des_file,des_data, nodata_value=None):
     
     # load the source file to get the appropriate attributes
     src_ds = gdal.Open(src_file)
@@ -724,9 +862,15 @@ def write_geotif_sameDomain(src_file,des_file,des_data):
     dst_ds.GetRasterBand(1).WriteArray( des_data )
 
     # Set the scale factor in the destination band
-    if scale_factor: dst_ds.GetRasterBand(1).SetScale(scale_factor)
-    if offset: dst_ds.GetRasterBand(1).SetOffset(offset)
+    if scale_factor: 
+        dst_ds.GetRasterBand(1).SetScale(scale_factor)
+    if offset: 
+        dst_ds.GetRasterBand(1).SetOffset(offset)
     
+    # Set the nodata value
+    if nodata_value is not None:
+        dst_ds.GetRasterBand(1).SetNoDataValue(nodata_value)
+
     # Set the geotransform
     dst_ds.SetGeoTransform(des_transform)
 
@@ -1110,6 +1254,33 @@ def get_river_attributes(riv_str, l_values, l_index, area):
 
 
 ## ---- ERA5
+def find_climate_seasonality_era5(ds, use_typical_cycle=False):
+
+    if not use_typical_cycle:
+        # Resample the observations to daily, retain individual years
+        daily_p_groups = ds['mtpr'].resample(time='1D').mean().groupby('time.year')
+        daily_t_groups = ds['t'].resample(time='1D').mean().groupby('time.year')
+
+        seasonalities = []
+        for zip_p, zip_t in zip(daily_p_groups,daily_t_groups):
+            year = zip_p[0]
+            yp = zip_p[1].values.flatten()
+            yt = zip_t[1].values.flatten()
+            seasonalities.append(fit_climate_sines(yt,yp))
+        return np.array(seasonalities)
+    
+    else:
+        # Resample to typical seasonal cycles at daily resolution
+        daily_p = ds['mtpr'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+        daily_t = ds['t'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+
+        # Time series of input and output
+        yp = daily_p.values.flatten()
+        yt = daily_t.values.flatten()
+
+        # Fit the sine curves and return the seasonality coefficient
+        return fit_climate_sines(yt,yp)
+
 def calculate_temp_prcp_stats(var, condition, hilo, l_values,l_index,
                               dataset='ERA5', units='hours'):
     
@@ -1139,11 +1310,6 @@ def calculate_temp_prcp_stats(var, condition, hilo, l_values,l_index,
     l_index.append( ('Climate', f'{hilo}_{var}_dur_kurtosis', '-', dataset) )
 
     # Calculate timing statistic
-#    condition['season'] = ('time', 
-#        [get_season(month) for month in condition['time.month'].values]) # add seasons
-#    max_season_id = condition.groupby('season').sum().argmax(dim='season') # find season with most True values
-#    l_values.append(condition.season[max_season_id].values[0]) # add season abbrev
-#    l_index.append( ('Climate', f'{hilo}_{var}_timing', 'season', dataset) )
     condition['season'] = ('time', [get_season(month) for month in condition['time.month'].values]) # add seasons
     season_groups = condition.groupby('season')
     season_list   = list(season_groups.groups.keys())
@@ -1301,8 +1467,10 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
     # Make the output locations
     ari_folder = clim_folder / 'aridity2'
     ari_folder.mkdir(parents=True, exist_ok=True)
-    snow_folder = clim_folder / 'fracsnow2'
-    snow_folder.mkdir(parents=True, exist_ok=True)
+    snow_folder = clim_folder / 'snow2'
+    snow_folder.mkdir(parents=True, exist_ok=True)    
+    fsnow_folder = clim_folder / 'fracsnow2'
+    fsnow_folder.mkdir(parents=True, exist_ok=True)
 
     # Loop over files and calculate aridity
     for prc_file, pet_file, tmp_file in zip(prc_files, pet_files, tmp_files):
@@ -1330,9 +1498,14 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
         ari_name = prc_file.replace('prec','aridity2')
         ari_file = str(ari_folder / ari_name)
         write_geotif_sameDomain(prc_path, ari_file, ari)
-        snow_name = prc_file.replace('prec','fracsnow2')
+
+        fsnow_name = prc_file.replace('prec','fracsnow2')
+        fsnow_file = str(fsnow_folder / fsnow_name)
+        write_geotif_sameDomain(prc_path, fsnow_file, frac_snow)
+
+        snow_name = prc_file.replace('prec','snow2')
         snow_file = str(snow_folder / snow_name)
-        write_geotif_sameDomain(prc_path, snow_file, frac_snow)
+        write_geotif_sameDomain(prc_path, snow_file, snow)
     
     return
 
@@ -1378,3 +1551,168 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
         pet_file = str(pet_folder / pet_name)
         write_geotif_sameDomain(srad_path, pet_file, pet_month)
     return
+
+def get_annual_worldclim_attributes(clim_folder, shp_str, prec_folder, tavg_folder, pet_folder, snow_folder, l_values, l_index):
+
+    '''Calculates annual WorldClim statistics'''
+
+    # Create the output folder
+    ann_folder = clim_folder / 'annual'
+    ann_folder.mkdir(exist_ok=True, parents=True)
+
+    # General settings
+    stats = ['mean', 'std']
+    
+    # --- P
+    prec_files = sorted( glob.glob(str(clim_folder / prec_folder / '*.tif')) )
+    annual_prec = create_annual_worldclim_map(prec_files, ann_folder, 'prec_sum.tif', 'prec')
+    zonal_out = zonal_stats(shp_str, annual_prec, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'prec_{stat}','mm', 'WorldClim'))
+
+    # --- PET
+    pet_files = sorted( glob.glob(str(clim_folder / pet_folder / '*.tif')) )
+    annual_pet = create_annual_worldclim_map(pet_files, ann_folder, 'pet_sum.tif', 'pet')
+    zonal_out = zonal_stats(shp_str, annual_pet, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'pet_{stat}','mm', 'WorldClim'))
+        
+    # --- T
+    tavg_files = sorted( glob.glob(str(clim_folder / tavg_folder / '*.tif')) )
+    annual_tavg = create_annual_worldclim_map(tavg_files, ann_folder, 't_avg.tif', 'tavg')
+    zonal_out = zonal_stats(shp_str, annual_tavg, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'tavg_{stat}','C', 'WorldClim'))
+
+    # --- Snow
+    snow_files = sorted( glob.glob(str(clim_folder / snow_folder / '*.tif')) )
+    annual_snow = create_annual_worldclim_map(snow_files, ann_folder, 'snow_sum.tif', 'snow')
+
+    # --- Aridity
+    annual_ari = derive_annual_worldclim_aridity(annual_prec, annual_pet, ann_folder, 'aridity.tif')
+    zonal_out = zonal_stats(shp_str, annual_ari, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'aridity2_{stat}','-', 'WorldClim'))
+
+    # --- Seasonality
+    annual_seas = derive_annual_worldclim_seasonality(prec_files, tavg_files, ann_folder, 'seasonality.tif')
+    zonal_out = zonal_stats(shp_str, annual_seas, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'seasonality2_{stat}','-', 'WorldClim'))
+    
+    # --- Snow fraction
+    annual_fs = derive_annual_worldclim_fracsnow(annual_prec, annual_snow, ann_folder, 'fracsnow.tif')
+    zonal_out = zonal_stats(shp_str, annual_fs, stats=stats)
+    for stat in stats:
+        l_values.append(zonal_out[0][stat])
+        l_index.append(('Climate',f'fracsnow2_{stat}','-', 'WorldClim'))
+    
+    return l_values, l_index
+
+def create_annual_worldclim_map(files, output_folder, output_name, var):
+    '''Creates an annual map from monthly WorldClim data'''
+
+    # Load the data and mask the no-data values
+    datasets = [get_geotif_data_as_array(file) for file in files]
+    no_datas = [get_geotif_nodata_value(file) for file in files]
+    masked_data = [np.ma.masked_array(data, mask=data==no_data) for data,no_data in zip(datasets,no_datas)]
+
+    # Create stacked array for computations along the third dimension
+    stacked_array = np.ma.dstack(masked_data)
+
+    # Create the annual value depending on what we're after
+    if var in ['prec','pet','snow']:
+        res_array = np.ma.sum(stacked_array, axis=2) # Sum along the third dimension
+    if var in ['tavg']:
+        res_array = np.ma.mean(stacked_array, axis=2) # Sum along the third dimension
+
+    # Apply no-data value and write to file
+    res_array = res_array.filled(no_datas[0])
+    output_path = str(output_folder/output_name)
+    write_geotif_sameDomain(files[0], output_path, res_array, nodata_value=no_datas[0])
+    
+    return output_path
+
+def derive_annual_worldclim_aridity(annual_prec, annual_pet, output_folder, output_name):
+    '''Creates an annual aridity map from annual P and PET maps'''
+
+    # Load the data and mask the no-data values
+    p_data = get_geotif_data_as_array(annual_prec)
+    no_data = get_geotif_nodata_value(annual_prec)
+    masked_p = np.ma.masked_array(p_data, mask=p_data==no_data)
+    
+    pet_data = get_geotif_data_as_array(annual_pet)
+    no_data = get_geotif_nodata_value(annual_pet)
+    masked_pet = np.ma.masked_array(pet_data, mask=pet_data==no_data)
+
+    # Build in a failsafe for zero P
+    masked_p = np.where(masked_p == 0, 1, masked_p)
+    
+    # Calculate aridity
+    ari = np.ma.divide(masked_pet,masked_p)
+
+    # Apply no-data value and write to file
+    ari = ari.filled(no_data)
+    output_path = str(output_folder/output_name)
+    write_geotif_sameDomain(annual_prec, output_path, ari, nodata_value=no_data)
+    
+    return output_path
+
+def derive_annual_worldclim_fracsnow(annual_prec, annual_snow, output_folder, output_name):
+    '''Creates an annual aridity map from annual P and snow maps'''
+
+    # Load the data and mask the no-data values
+    p_data = get_geotif_data_as_array(annual_prec)
+    no_data = get_geotif_nodata_value(annual_prec)
+    masked_p = np.ma.masked_array(p_data, mask=p_data==no_data)
+    
+    snow_data = get_geotif_data_as_array(annual_snow)
+    no_data = get_geotif_nodata_value(annual_snow)
+    masked_snow = np.ma.masked_array(snow_data, mask=snow_data==no_data)
+
+    # Build in a failsafe for zero P
+    masked_p = np.where(masked_p == 0, 1, masked_p)
+    
+    # Calculate aridity
+    fsnow = np.ma.divide(masked_snow,masked_p)
+
+    # Apply no-data value and write to file
+    fsnow = fsnow.filled(no_data)
+    output_path = str(output_folder/output_name)
+    write_geotif_sameDomain(annual_prec, output_path, fsnow, nodata_value=no_data)
+    
+    return output_path
+
+def derive_annual_worldclim_seasonality(prec_files, tavg_files, output_folder, output_name):
+
+    '''Calculates a map of seasonality values using WorldClim precipitation and temperature'''
+
+    # Get the precip files
+    datasets = [get_geotif_data_as_array(file) for file in prec_files]
+    no_datas = [get_geotif_nodata_value(file) for file in prec_files]
+    masked_data = [np.ma.masked_array(data, mask=data==no_data) for data,no_data in zip(datasets,no_datas)]
+    stacked_prec = np.ma.dstack(masked_data)
+
+    # Get the tavg files
+    datasets = [get_geotif_data_as_array(file) for file in tavg_files]
+    no_datas = [get_geotif_nodata_value(file) for file in tavg_files]
+    masked_data = [np.ma.masked_array(data, mask=data==no_data) for data,no_data in zip(datasets,no_datas)]
+    stacked_tavg = np.ma.dstack(masked_data)
+
+    # Fit the sine curves in the third dimension
+    t_pars = np.apply_along_axis(fit_temp_sines, axis=2, arr=stacked_tavg)
+    p_pars = np.apply_along_axis(fit_prec_sines, axis=2, arr=stacked_prec)
+
+    # Calculate the dimensionless seasonality index in space as per Eq. 14 in Woods (2009)
+    seasonality = p_pars[:,:,1]*np.sign(t_pars[:,:,1])*np.cos(2*np.pi*(p_pars[:,:,2]-t_pars[:,:,2])/1)
+
+    # Apply no-data value and write to file
+    output_path = str(output_folder/output_name)
+    write_geotif_sameDomain(prec_files[0], output_path, seasonality, nodata_value=np.nan)
+     
+    return output_path
