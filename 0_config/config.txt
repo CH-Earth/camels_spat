@@ -100,6 +100,9 @@ geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1
 climate_path         | worldclim                                                                                | string  # Folder for Pelletier soil data downloads
 climate_urls         | 0_config/worldclim_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
 
-# 9. Analysis
+# 9. Attributes
+att_path   | attributes | string  # Folder with where attribute .csv should go; appended to 'data_path'
+
+# 10. Analysis
 image_path | /Users/wmk934/OneDrive - University of Calgary/Postdoc/Documents/papers/paper-Knoben-CAMELspat/img | string  # Path where images will be stored
 

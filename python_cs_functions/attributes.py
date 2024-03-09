@@ -30,12 +30,12 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
             for field in fields:
                 tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
                 zonal_out = zonal_stats(shp_str, tif, stats=stats)
-                scale,offset = csa.read_scale_and_offset(tif)
-                l_values = csa.update_values_list(l_values, stats, zonal_out, scale, offset)
-                l_index += [('Soil', f'{sub_folder}_{depth}_{stat}_min',  f'{unit}', 'SOILGRIDS'),
-                            ('Soil', f'{sub_folder}_{depth}_{stat}_mean', f'{unit}', 'SOILGRIDS'),
-                            ('Soil', f'{sub_folder}_{depth}_{stat}_max',  f'{unit}', 'SOILGRIDS'),
-                            ('Soil', f'{sub_folder}_{depth}_{stat}_std',  f'{unit}', 'SOILGRIDS')]
+                scale,offset = read_scale_and_offset(tif)
+                l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+                l_index += [('Soil', f'{sub_folder}_{depth}_{field}_min',  f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{field}_mean', f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{field}_max',  f'{unit}', 'SOILGRIDS'),
+                            ('Soil', f'{sub_folder}_{depth}_{field}_std',  f'{unit}', 'SOILGRIDS')]
 
     return l_values, l_index
 
