@@ -72,6 +72,7 @@ geospatial_area      | -179.5,-50,5,85                                          
 geospatial_temp_path | geospatial_temp                                                                          | string  # Path for temporary data storage of geospatial data sets (before subsetting)
 dem_path             | merit                                                                                    | string  # Folder for the DEM downloads
 dem_url              | http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0/elv_{}{}.tar         | string  # Download URL for Merit Hydro Adjusted Elevations
+dem_calc_crs         | ESRI:102009                                                                              | string  # Coordinate Reference System to calculate polygon areas in
 soil_path            | soilgrids                                                                                | string  # Folder for soil downloads
 soil_url             | https://files.isric.org/soilgrids/latest/data/                                           | string  # Download URL for soilgrids files
 lake_path            | hydrolakes                                                                               | string  # Folder for hydrolakes downloads
@@ -99,6 +100,9 @@ geology_url          | https://borealisdata.ca/file.xhtml?fileId=72026&version=1
 climate_path         | worldclim                                                                                | string  # Folder for Pelletier soil data downloads
 climate_urls         | 0_config/worldclim_links.txt                                                             | string  # File with download links for Pelletier soil data, relative to 'code_path'
 
-# 9. Analysis
+# 9. Attributes
+att_path   | attributes | string  # Folder with where attribute .csv should go; appended to 'data_path'
+
+# 10. Analysis
 image_path | /Users/wmk934/OneDrive - University of Calgary/Postdoc/Documents/papers/paper-Knoben-CAMELspat/img | string  # Path where images will be stored
 

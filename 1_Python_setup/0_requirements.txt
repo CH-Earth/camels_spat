@@ -1,8 +1,9 @@
+baseflow
 cdsapi
 cligj
+dask
 easymore
 fiona
-gdal
 geopandas
 hs_restclient
 jupyter
@@ -16,6 +17,7 @@ pandas
 py7zr
 pyshp
 pysheds
+rasterstats
 requests
 rtree
 seaborn
