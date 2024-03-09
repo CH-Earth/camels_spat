@@ -279,6 +279,86 @@ def find_files_in_folder(folder,extension=''):
 
     return files
 
+def check_geotiff_dtypes_and_convert(files):
+    
+    # Mapping from string to GDAL datatype constant
+    datatype_mapping = {
+        'Byte': gdal.GDT_Byte,
+        'UInt16': gdal.GDT_UInt16,
+        'Int16': gdal.GDT_Int16,
+        'UInt32': gdal.GDT_UInt32,
+        'Int32': gdal.GDT_Int32,
+        'Float32': gdal.GDT_Float32,
+        'Float64': gdal.GDT_Float64
+    }
+
+    # Check the data types in the files
+    data_types = []
+    for file in files:
+        ds = gdal.Open(file)
+        data_types.append(gdal.GetDataTypeName(ds.GetRasterBand(1).DataType))
+        ds = None
+
+    # Count occurrences in the list
+    dtype_counts = {}
+    for dtype in data_types:
+        if dtype in dtype_counts:
+            dtype_counts[dtype] += 1
+        else:
+            dtype_counts[dtype] = 1
+    most_common_dtype = max(dtype_counts, key=dtype_counts.get)
+    unique_dtypes = list(dtype_counts.keys())
+
+    # Check if data types are consistent
+    if len(unique_dtypes) != 1:
+        print(f'--- WARNING: process_soilgrids_tiles_into_single_geotiff(): multiple data types found in input files: {unique_dtypes}.')
+        print(f'gdalbuildvrt will not process these. Converting all files to majority type {most_common_dtype}.')
+        
+        # Convert data types
+        desired_dtype = datatype_mapping[most_common_dtype]
+        for file in files:
+            
+            ds = gdal.Open(file)
+            current_dtype = gdal.GetDataTypeName(ds.GetRasterBand(1).DataType)
+            if current_dtype != most_common_dtype:
+                print(f'processing {file}')
+
+                # Close the current file
+                print(f'closing {file}')
+                ds = None
+
+                # Copy the file to a temporary location
+                temp_file = file.replace('.tif','_TEMP.tif')
+                print(f'Copying {temp_file}')
+                shutil.copy(file,temp_file)
+
+                # Use gdal.Translate to convert datatype
+                print(f'Converting {temp_file}')
+                ds = gdal.Open(temp_file)
+                gdal.Translate(file, ds, format='GTiff', outputType= desired_dtype)
+                ds = None
+
+                # Remove the temporary file
+                print(f'Removing {temp_file}')
+                os.remove(temp_file)
+            else:
+                ds = None
+
+    return # nothing
+
+def select_uint16_only(files):
+
+    # Check the data types in the files
+    uint16_files = []
+    for file in files:
+        ds = gdal.Open(file)
+        dtype = gdal.GetDataTypeName(ds.GetRasterBand(1).DataType)
+        if dtype == 'UInt16':
+            uint16_files.append(file)
+        ds = None
+
+    return uint16_files
+
 def process_soilgrids_tiles_into_single_geotiff(in_folder,out_folder,out_file,
                                                 to_crs='',subset_window=''):
 
@@ -289,6 +369,10 @@ def process_soilgrids_tiles_into_single_geotiff(in_folder,out_folder,out_file,
     
     # Find the tiles
     files = find_files_in_folder(in_folder,extension='.tif')
+    
+    # Ensure data types in files match
+    #check_geotiff_dtypes_and_convert(files) # Note: even after converting data type we run into issues about mismatching projection between tiles 
+    files = select_uint16_only(files)
     
     # Create a virtual dataset (VRT) of all individual GeoTIFF files that's not written to disk (argument '')
     vrt_options = gdal.BuildVRTOptions(resolution='highest')
