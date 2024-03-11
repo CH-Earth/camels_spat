@@ -6,6 +6,7 @@ import os
 import pandas as pd
 import rasterio
 import xarray as xr
+import warnings
 from dateutil.relativedelta import relativedelta
 from osgeo import gdal, osr
 from rasterstats import zonal_stats
@@ -93,7 +94,9 @@ def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index):
 
     for file,att,unit in zip(files,attrs,units):
         tif = str( geo_folder / dataset / 'raw' / file )
+        check_and_set_nodata_value_on_pelletier_file(tif)
         zonal_out = zonal_stats(shp_str, tif, stats=stats)
+        zonal_out = check_zonal_stats_outcomes(zonal_out, new_val=0) # certain tifs have no data because there is no variable X, so we set these to 0
         scale,offset = read_scale_and_offset(tif)
         l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
         l_index += [('Soil', f'{att}_min',  f'{unit}', 'Pelletier'),
@@ -102,6 +105,18 @@ def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index):
                     ('Soil', f'{att}_std',  f'{unit}', 'Pelletier')]
         
     return l_values,l_index
+
+def check_and_set_nodata_value_on_pelletier_file(tif, nodata=255):
+    if not get_geotif_nodata_value(tif): # no no-data value set yet
+        data = get_geotif_data_as_array(tif)
+        if data.max() == nodata: # but we do need to set a new no-data value here
+            data = None
+            ds = gdal.Open(tif)
+            band = ds.GetRasterBand(1)
+            band.SetNoDataValue(255)
+            ds.FlushCache()
+            ds = None
+            return
 
 def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values, l_index):
     
@@ -139,6 +154,10 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
     assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
     
+    # Gap-fill the streamflow series if needed, so that we have identical length time series to work with
+    hyd = hyd.resample(time='D').asfreq()
+    assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
+
     # Create a water-year time variable
     hyd['water_year'] = hyd['time'].dt.year.where(hyd['time'].dt.month < 10, hyd['time'].dt.year + 1)
     pre['water_year'] = pre['time'].dt.year.where(pre['time'].dt.month < 10, pre['time'].dt.year + 1)
@@ -157,14 +176,21 @@ def attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index):
     
     '''Calculates open water attributes from HydroLAKES'''
 
-    # Load the file
+    # Define the standard file name
     lake_str = str(geo_folder / dataset / 'raw' / 'HydroLAKES_polys_v10_NorthAmerica.shp')
-    lakes = gpd.read_file(lake_str)
 
-    # General stats
-    res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
-    num_lakes = len(lakes)
-    num_resvr = res_mask.sum() 
+    # Check if the file exists (some basins won't have lakes)
+    lakes = None # if we have a lake file this will get overwritten - we use this in get_open_water_stats()
+    if os.path.exists(lake_str):
+        lakes = gpd.read_file(lake_str)
+
+        # General stats
+        res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
+        num_lakes = len(lakes)
+        num_resvr = res_mask.sum() 
+    else:
+        num_lakes = 0
+        num_resvr = 0
     l_values.append(num_lakes)
     l_index.append(('Open water', 'open_water_number',  '-', 'HydroLAKES'))
     l_values.append(num_resvr)
@@ -595,6 +621,14 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, l_index):
     return l_values, l_index
 
 ## ------- Component functions
+def check_zonal_stats_outcomes(zonal_out, new_val=np.nan):
+    '''Checks for None value in zonal_out, and sets these to np.nan or user-defined value'''
+    for ix in range(0,len(zonal_out)):
+         for key,val in zonal_out[ix].items():
+             if val is None:
+                 zonal_out[ix][key] = new_val
+    return zonal_out
+
 # Sine functions for P and T as per Woods (2009), Eq. 2 and 3. Period = 1 year
 def sine_function_temp(x, mean, delta, phase, period=1):
     result = mean + delta * np.sin(2*np.pi*(x-phase)/period)
@@ -806,6 +840,9 @@ def update_values_list(l_values, stats, zonal_out, scale, offset):
     return l_values
 
 def read_scale_and_offset(geotiff_path):
+    # Enforce data type
+    geotiff_path = str(geotiff_path)
+    
     # Open the GeoTIFF file
     dataset = gdal.Open(geotiff_path)
 
@@ -822,6 +859,7 @@ def read_scale_and_offset(geotiff_path):
     return scale, offset
 
 def get_geotif_data_as_array(file, band=1):
+    file = str(file)
     ds = gdal.Open(file) # open the file
     band = ds.GetRasterBand(band) # get the data band
     data = band.ReadAsArray() # convert to numpy array for further manipulation   
@@ -841,6 +879,8 @@ def enforce_data_range(data,min,max,replace_with='limit'):
     return data
 
 def write_geotif_sameDomain(src_file,des_file,des_data, nodata_value=None):
+    # Enforce data type
+    src_file = str(src_file)
     
     # load the source file to get the appropriate attributes
     src_ds = gdal.Open(src_file)
@@ -1058,7 +1098,12 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     # Mean monthly flows
     monthly_q = hyd['q_obs'].resample(time='1ME').mean().groupby('time.month')
     monthly_m = monthly_q.mean()
-    monthly_s = monthly_q.std()
+    with warnings.catch_warnings():
+        # This mutes a "RuntimeWarning: Degrees of freedom <= 0 for slice. 
+        #  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,"
+        #  warning which we'll get when calculating std() on NaN months
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        monthly_s = monthly_q.std()
     l_values, l_index = process_monthly_means_to_lists(monthly_m, 'mean', l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
     l_values, l_index = process_monthly_means_to_lists(monthly_s, 'std',  l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
     
@@ -1073,7 +1118,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, ERA5') )
     
     # Streamflow elasticity
-    q_elas = np.median(((daily_mean_q - daily_mean_q.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q.mean()))
+    q_elas = np.nanmedian(((daily_mean_q - daily_mean_q.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q.mean()))
     l_values.append(q_elas)
     l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, ERA5') )
     
@@ -1082,13 +1127,21 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     slopes = []
     for year,group in groups:
         flows = group.values.copy()
-        flows.sort()
-        flows = np.log(flows)
-        slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
-        slopes.append(slope)
+        if (flows == 0).all() or (np.isnan(flows).all()):
+            slopes.append(np.nan) # so we can ignore these years
+        else:
+            # Account for NaNs - we don't want these to influence the calculations
+            flows = flows[~np.isnan(flows)]
+            # Account for zero and NaN flows that mess with log calculations
+            flows[flows == 0] = flows.mean()/1000 # add 0.1% of mean flow to zeroes      
+            # Do the actual stuff
+            flows.sort()
+            flows = np.log(flows)
+            slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+            slopes.append(slope)
     slopes = np.array(slopes)
-    slope_m = slopes.mean()
-    slope_s = slopes.std()
+    slope_m = np.nanmean(slopes)
+    slope_s = np.nanstd(slopes)
     
     l_values.append(slope_m)
     l_index.append( ('Hydrology', 'fdc_slope_mean', '-', f'{source}') )
@@ -1096,8 +1149,11 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'fdc_slope_std', '-', f'{source}') )
     
     # Baseflow index
-    rec,_ = baseflow.separation(hyd['q_obs'].values, method='Eckhardt') # Find baseflow with Eckhardt filter
+    nan_mask = np.isnan(hyd['q_obs'])
+    q_filled = hyd['q_obs'].interpolate_na(dim='time', method='linear')
+    rec,_ = baseflow.separation(q_filled.values, method='Eckhardt') # Find baseflow with Eckhardt filter
     tmp = xr.DataArray(rec['Eckhardt'], dims='time', coords={'time': hyd['time']}) # Prepare a new variable to put in 'hyd'
+    tmp[nan_mask] = np.nan
     hyd['q_bas'] = tmp
     daily_mean_qbase = hyd['q_bas'].groupby(hyd['water_year']).mean()
     bfi_m = (daily_mean_qbase / daily_mean_q).mean()
@@ -1114,9 +1170,13 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     groups = tmp_frc_flow.groupby(hyd['water_year'])
     dates = []
     for year,group in groups:
-        hdf = group[group > 0.5][0]['time'].values
-        dates.append(pd.Timestamp(hdf).dayofyear)
+        if np.isnan(group).all(): # happens in a few basins with year-long+ periods of zero flow
+            dates.append(np.nan)
+        else:
+            hdf = group[group > 0.5][0]['time'].values
+            dates.append(pd.Timestamp(hdf).dayofyear)
     dates = np.array(dates)
+    dates = dates[~np.isnan(dates)] # Remove NaNs so we can use the circ stats
     hdf_m = circmean(dates, high=366)
     hdf_s = circstd(dates, high=366)
     l_values.append(hdf_m)
@@ -1126,9 +1186,14 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     
     # Quantiles
     groups = hyd['q_obs'].groupby(hyd['water_year'])
-    for quantile in [0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
-        q_m = groups.quantile(quantile).mean()
-        q_s = groups.quantile(quantile).std()
+    with warnings.catch_warnings():
+        # This mutes a "RuntimeWarning: All-NaN slice encountered
+        #  return _nanquantile_unchecked("
+        #  warning which we'll get when calculating quantiles on NaN years
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        for quantile in [0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+            q_m = groups.quantile(quantile, skipna=True).mean()
+            q_s = groups.quantile(quantile).std()
         l_values.append(float(q_m.values))
         l_index.append(('Hydrology', f'q{int(quantile*100)}_mean', 'mm day^-1', f'{source}'))
         l_values.append(float(q_s.values))
@@ -1137,7 +1202,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     # Durations
     variable  = 'q_obs'
     no_flow_threshold = 0 # mm d-1
-    no_flow_condition = hyd[variable] < no_flow_threshold
+    no_flow_condition = hyd[variable] <= no_flow_threshold
     l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset='source',units='days',category='Hydrology')
     
     low_flow_threshold = 0.2 * hyd['q_obs'].mean() # mm d-1
@@ -1154,13 +1219,13 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
 def get_open_water_stats(gdf, att, mask, l_values, l_index):
     '''Calculates min, mean, max, std and total att ('Lake_area', 'Vol_total'), optionally using a reservoir mask'''
 
-    # Setup
+    # Initialization - this must happen before we check if we got a GDF,
+    #   because otherwise these values won't be available for l_index
     if mask == 'all':
-        mask = gdf.index >= 0 # Selects everything if no mask is provided
-        type = 'open_water' # no reservoir mask, hence we're working with lakes
+        water = 'open_water' # no reservoir mask, hence we're working with lakes
     elif mask == 'reservoir':
-        mask = gdf['Lake_type'] == 2
-        type = 'reservoir'
+        water = 'reservoir'
+
     if att == 'Lake_area':
         units = 'km^2' # https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf
         att_d = 'area'
@@ -1168,17 +1233,38 @@ def get_open_water_stats(gdf, att, mask, l_values, l_index):
         units = 'million~m^3' # https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf
         att_d = 'volume'
 
+    # Check if we were handed a lake polygon
+    if gdf is not None:
+        # Setup
+        if mask == 'all':
+            mask = gdf.index >= 0 # Selects everything if no mask is provided
+        elif mask == 'reservoir':
+            mask = gdf['Lake_type'] == 2
+        
+        # Get the values
+        min_val = gdf[mask][att].min()
+        mean_val = gdf[mask][att].mean()
+        max_val = gdf[mask][att].max()
+        std_val = gdf[mask][att].std()
+        tot_val = gdf[mask][att].sum()# total
+    else:
+        min_val = 0
+        mean_val = 0
+        max_val = 0
+        std_val = 0
+        tot_val = 0
+
     # Stats
-    l_values.append(gdf[mask][att].min())
-    l_index.append(('Open water', f'{type}_{att_d}_min',  f'{units}', 'HydroLAKES'))
-    l_values.append(gdf[mask][att].mean())
-    l_index.append(('Open water', f'{type}_{att_d}_mean',  f'{units}', 'HydroLAKES'))
-    l_values.append(gdf[mask][att].max())
-    l_index.append(('Open water', f'{type}_{att_d}_max',  f'{units}', 'HydroLAKES'))
-    l_values.append(gdf[mask][att].std())
-    l_index.append(('Open water', f'{type}_{att_d}_std',  f'{units}', 'HydroLAKES'))
-    l_values.append(gdf[mask][att].sum()) # total
-    l_index.append(('Open water', f'{type}_{att_d}_total',  f'{units}', 'HydroLAKES'))
+    l_values.append(min_val)
+    l_index.append(('Open water', f'{water}_{att_d}_min',  f'{units}', 'HydroLAKES'))
+    l_values.append(mean_val)
+    l_index.append(('Open water', f'{water}_{att_d}_mean',  f'{units}', 'HydroLAKES'))
+    l_values.append(max_val)
+    l_index.append(('Open water', f'{water}_{att_d}_max',  f'{units}', 'HydroLAKES'))
+    l_values.append(std_val)
+    l_index.append(('Open water', f'{water}_{att_d}_std',  f'{units}', 'HydroLAKES'))
+    l_values.append(tot_val) 
+    l_index.append(('Open water', f'{water}_{att_d}_total',  f'{units}', 'HydroLAKES'))
     
     return l_values, l_index
 
@@ -1190,18 +1276,19 @@ def get_aspect_attributes(tif,l_values,l_index):
     aspect = get_geotif_data_as_array(tif)
     no_data = get_geotif_nodata_value(tif)
     masked_aspect = np.ma.masked_array(aspect, aspect == no_data)
+    values = masked_aspect.compressed() # scipy < 1.12.0 circmean/std don't work well with masked arrays
 
     ## Calculate the statistics
-    l_values.append(masked_aspect.min())
+    l_values.append(values.min())
     l_index.append(('Topography', 'aspect_min',  'degrees', 'MERIT Hydro'))
     
-    l_values.append(circmean(masked_aspect,high=360))
+    l_values.append(circmean(values,high=360))
     l_index.append(('Topography', 'aspect_mean',  'degrees', 'MERIT Hydro'))
 
-    l_values.append(circstd(masked_aspect,high=360))
+    l_values.append(circstd(values,high=360))
     l_index.append(('Topography', 'aspect_std',  'degrees', 'MERIT Hydro'))
 
-    l_values.append(masked_aspect.max())
+    l_values.append(values.max())
     l_index.append(('Topography', 'aspect_max',  'degrees', 'MERIT Hydro'))
     
     return l_values,l_index
@@ -1210,41 +1297,62 @@ def get_river_attributes(riv_str, l_values, l_index, area):
     
     '''Calculates topographic attributes from a MERIT Hydro Basins river polygon'''
 
-    # Load shapefiles
-    river = gpd.read_file(riv_str)
-    river = river.set_index('COMID')
+    # Initialize zeros for cases where we have no shapefile or an empty one
+    stream_total = 0
+    min_length = 0
+    mean_length = 0
+    max_length = 0
+    std_length = 0
+    riv_order = 0
+    density = 0
+    elongation = 0
     
-    # Raw data
-    stream_lengths = []
-    headwaters = river[river['maxup'] == 0] # identify reaches with no upstream
-    for COMID in headwaters.index:
-        stream_length = 0
-        while COMID in river.index:
-            stream_length += river.loc[COMID]['lengthkm'] # Add the length of the current segment
-            COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
-        stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
-    
-    # Stats
-    stream_total = river['lengthkm'].sum()
-    stream_lengths = np.array(stream_lengths)
-    l_values.append(stream_lengths.min())
+    # Check if the file exists (for headwaters we won't have a river polygon)
+    if os.path.exists(riv_str):
+        # Load shapefiles
+        river = gpd.read_file(riv_str)
+        river = river.set_index('COMID')
+
+        # Check if we actually have a river segment (empty shapefile is not the same as no shapefile)
+        if len(river) > 0:
+            # Raw data
+            stream_lengths = []
+            headwaters = river[river['maxup'] == 0] # identify reaches with no upstream
+            for COMID in headwaters.index:
+                stream_length = 0
+                while COMID in river.index:
+                    stream_length += river.loc[COMID]['lengthkm'] # Add the length of the current segment
+                    COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
+                stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
+        
+            # Stats
+            stream_total = river['lengthkm'].sum()
+            stream_lengths = np.array(stream_lengths)
+            min_length = stream_lengths.min()
+            mean_length = stream_lengths.mean()
+            max_length = stream_lengths.max()
+            std_length = stream_lengths.std()
+            riv_order = river['order'].max()
+            density = stream_total/area
+            elongation = 2*np.sqrt(area/np.pi)/max_length
+
+    # Update lists
+    l_values.append(min_length)
     l_index.append(('Topography', 'stream_length_min',  'km', 'MERIT Hydro Basins'))
-    l_values.append(stream_lengths.mean())
+    l_values.append(mean_length)
     l_index.append(('Topography', 'stream_length_mean',  'km', 'MERIT Hydro Basins'))
-    l_values.append(stream_lengths.max())
+    l_values.append(max_length)
     l_index.append(('Topography', 'stream_length_max',  'km', 'MERIT Hydro Basins'))
-    l_values.append(stream_lengths.std())
+    l_values.append(std_length)
     l_index.append(('Topography', 'stream_length_std',  'km', 'MERIT Hydro Basins'))
     l_values.append(stream_total)
     l_index.append(('Topography', 'stream_length_total',  'km', 'MERIT Hydro Basins'))
     
     # Order
-    l_values.append(river['order'].max())
+    l_values.append(riv_order)
     l_index.append(('Topography', 'steam_order_max',  '-', 'MERIT Hydro Basins'))
 
     # Derived
-    density = stream_total/area
-    elongation = 2*np.sqrt(area/np.pi)/stream_lengths.max()
     l_values.append(density)
     l_index.append(('Topography', 'stream_density',  'km^-1', 'Derived'))
     l_values.append(elongation)
@@ -1480,9 +1588,9 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
 
         # Load data
-        prc_path = clim_folder / 'prec' / prc_file
-        pet_path = clim_folder / 'pet'  / pet_file
-        tmp_path = clim_folder / 'tavg' / tmp_file      
+        prc_path = str(clim_folder / 'prec' / prc_file)
+        pet_path = str(clim_folder / 'pet'  / pet_file)
+        tmp_path = str(clim_folder / 'tavg' / tmp_file )     
         prc = get_geotif_data_as_array(prc_path) # [mm]
         pet = get_geotif_data_as_array(pet_path) # [mm]
         tmp = get_geotif_data_as_array(tmp_path) # [C]
@@ -1536,8 +1644,8 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
         
         # Load data
-        srad_path = clim_folder / 'srad' / srad_file
-        tavg_path = clim_folder / 'tavg' / tavg_file      
+        srad_path = str(clim_folder / 'srad' / srad_file)
+        tavg_path = str(clim_folder / 'tavg' / tavg_file)     
         srad = get_geotif_data_as_array(srad_path) / 1000 # [kJ m-2 day-1] / 1000 = [MJ m-2 day-1]
         tavg = get_geotif_data_as_array(tavg_path)
         
