@@ -1012,6 +1012,22 @@ def download_era5_time_invariant_data_to_netcdf(coordinates,file,retries_max=10)
                 break
     return
 
+def find_first_day_next_month(time):
+
+    '''Takes a datetime and find day 1 on the next month'''
+
+    # Initial settings: day 1 of a month in the same year
+    new_day = 1
+    new_month = time.month+1
+    new_year = time.year
+    
+    # Check if we're at the end of the year
+    if new_month == 13: 
+        new_month = 1
+        new_year = time.year+1
+
+    return time.replace(year=new_year, month=new_month, day=new_day)
+
 def convert_start_and_end_dates_to_era5_download_lists(start,end):
 
     '''Takes two datetime.datetime(y,m,d,h,min) objects and returns two lists with start and end dates for ERA5 downloads at monthly intervals'''
@@ -1028,25 +1044,23 @@ def convert_start_and_end_dates_to_era5_download_lists(start,end):
         
         # Add to start list
         start_l.append(cur)
-        
-        # Figure out the index of the next month and if the year changes:
-        tmp = cur + timedelta(days=31) # Add 31 days to current date to ensure we're in the next month, might also switch the year
-        next_month = tmp.month #  Extract 'month' from this object
-        next_year = tmp.year # Extract the year too. If we ticked over into a new year we need to track this, otherwise we never increment the year
 
-        # Create the end-of-month date
-        cur = cur.replace(year=next_year, month=next_month) - timedelta(days=1)
-        
+        # Find what the 1st day of the next month is
+        new_start = find_first_day_next_month(cur)
+
+        # Find the end date of the current month
+        cur_end = new_start - timedelta(days=1)
+
         # Ensure this does not step over our end date
-        if cur >= end:
-            cur = end
+        if cur_end >= end:
+            cur_end = end
 
         # Add to end list
-        end_l.append(cur)
+        end_l.append(cur_end)
 
-        # Add 1 day to create the new start-of-month date
-        cur = cur + timedelta(days=1)
-        
+        # Update variable for while loop
+        cur = new_start
+
     return start_l,end_l
 
 # --- ERA5 processing ---

@@ -7,7 +7,7 @@ import pandas as pd
 import urllib.request
 from pathlib import Path
 
-def download_url_into_folder(url,folder, retries_max=10, requests_kwargs={}, overwrite=False):
+def download_url_into_folder(url, folder, retries_max=10, requests_kwargs={}, overwrite=False):
     
     # Extract the filename from the URL
     file_name = url.split('/')[-1].strip() # Get the last part of the url, strip whitespace and characters

@@ -1127,7 +1127,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     slopes = []
     for year,group in groups:
         flows = group.values.copy()
-        if (flows == 0).all() or (np.isnan(flows).all()):
+        if np.logical_or(np.isnan(flows),flows == 0).all():
             slopes.append(np.nan) # so we can ignore these years
         else:
             # Account for NaNs - we don't want these to influence the calculations
@@ -1312,6 +1312,7 @@ def get_river_attributes(riv_str, l_values, l_index, area):
         # Load shapefiles
         river = gpd.read_file(riv_str)
         river = river.set_index('COMID')
+        river = river[~river.index.duplicated(keep='first')] # Removes any duplicate river segments
 
         # Check if we actually have a river segment (empty shapefile is not the same as no shapefile)
         if len(river) > 0:
