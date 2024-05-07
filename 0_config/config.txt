@@ -12,12 +12,12 @@
 
 
 # Main settings
-code_path | /Users/wmk934/code/camels_spat/   | string  # Root path of processing code
-data_path | /Users/wmk934/data/CAMELS_spat/   | string  # Root path of data location
-temp_path | /Users/wmk934/data/CAMELS_spat/camels-spat-data/temp | string  # Path to temporary data folder - good for intermediate storage
+code_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/   | string  # Root path of processing code
+data_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/         | string  # Root path of data location
+temp_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/temp/    | string  # Path to temporary data folder - good for intermediate storage
 
 # 1. Python setup
-venv_path | /Users/wmk934/data/CAMELS_spat/ | string  # Path where the Python virtual environment will be created
+venv_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/camels-spat-env/ | string  # Path where the Python virtual environment will be created
 venv_name | camels-spat-env                 | string  # Virtual environment name
 reqs_path | 1_Python_setup/                 | string  # Sub-folders in root that contain requirements
 reqs_file | 0_requirements.txt              | string  # Python environment requirements for `pip install -r reqs.txt`
