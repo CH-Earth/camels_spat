@@ -6,6 +6,13 @@ from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
+# --- Reruns 2024-05-19
+# These fix various small errors discovered during data use
+rerun_file = Path('/globalhome/wmk934/HPC/camels_spat/7_forcing_data/forcing_check_logs/reruns_20240516.csv')
+reruns = pd.read_csv(rerun_file)
+overwrite_existing = True
+# --- Reruns 2024-05-19
+
 # --- Config handling
 # Specify where the config file can be found
 config_file = '../0_config/config.txt'
@@ -40,6 +47,15 @@ else:
 
 # Define cs_meta row
 row = cs_meta.iloc[ix] # needs to be between 0  and 1697
+
+# --- Reruns 2024-05-19
+this_basin = row['Country'] + '_' + row['Station_id']
+if this_basin not in reruns['basin'].values:
+    print(f'No reruns for basin {this_basin}. Exiting.')
+    sys.exit(0) # with next station, because we have no reruns for this station. Error code 0: clean exit, no problems
+else:
+    print(f'Running reruns for basin {this_basin}.')
+# --- Reruns 2024-05-19
 
 #debug_message = f'\n!!! CHECK DEBUGGING STATUS: \n- Full run in progress\n'
 #print(debug_message)

@@ -17,7 +17,7 @@ config_file = '../0_config/config.txt'
 
 # Get the required info from the config file
 temp_folder = cs.read_from_config(config_file, 'temp_path') # Should exist at this point
-
+temp_folder = '/gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/temp/ERA5/1_download' # re-runs 2024-05-6
 ## Processing
 # Find the files and sort them according to date
 surface_files  = sorted( glob.glob(temp_folder + '/ERA5_*_surface_variables.nc') )

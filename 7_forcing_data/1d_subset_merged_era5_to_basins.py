@@ -8,6 +8,16 @@ from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
+# --- General flag that can later be used to debug
+overwrite_existing = False
+
+# --- Reruns 2024-05-18
+# These fix various small errors discovered during data use
+rerun_file = Path('/globalhome/wmk934/HPC/camels_spat/7_forcing_data/forcing_check_logs/reruns_20240516.csv')
+reruns = pd.read_csv(rerun_file)
+overwrite_existing = True
+# --- Reruns 2024-05-18
+
 # --- Config handling
 # Specify where the config file can be found
 config_file = '../0_config/config.txt'
@@ -51,6 +61,15 @@ else:
 # Define cs_meta row
 row = cs_meta.iloc[ix] # needs to be between 0  and 1697
 
+# --- Reruns 2024-05-18
+this_basin = row['Country'] + '_' + row['Station_id']
+if this_basin not in reruns['basin'].values:
+    print(f'No reruns for basin {this_basin}. Exiting.')
+    sys.exit(0) # with next station, because we have no reruns for this station. Error code 0: clean exit, no problems
+else:
+    print(f'Running reruns for basin {this_basin}.')
+# --- Reruns 2024-05-18
+
 # Run
 debug_message = f'\n!!! CHECK DEBUGGING STATUS: \n-Full array job run'
 print(debug_message)
@@ -90,7 +109,7 @@ infiles = [temp_folder/'ERA5_2023-01-01_invariants.nc'] + [temp_folder/f'ERA5_{y
 for infile in infiles:
     if os.path.exists(infile):
         outfile = raw_fold/os.path.basename(infile)
-        if not os.path.exists(outfile):
+        if (not os.path.exists(outfile)) or (overwrite_existing): # file doesn't exist yet or we don't care
             cs.extract_ERA5_subset(infile,outfile,coords_era5)
     else:
         print(f'    ERROR: source file {infile} not found.')

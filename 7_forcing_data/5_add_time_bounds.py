@@ -58,6 +58,9 @@ all_files = raw_files + lump_files + dist_files
 
 # Get LST for this station
 LST = row['dv_flow_obs_timezone']
+if LST == 'NST':
+    print(f'NST found for {row.Station_id}, switching to AST')
+    LST = 'AST' # set Newfoundland Standard Time (UTC-3h30) to Atlantic Standard Time (UTC-4h), because we only have forcing at whole hours
 
 # Open files, add time_bnds, and close
 for file in all_files:

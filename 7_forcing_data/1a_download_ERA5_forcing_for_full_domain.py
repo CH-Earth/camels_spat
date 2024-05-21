@@ -73,7 +73,7 @@ for ix,row in cs_meta.iterrows():
     final_date = max(final_date, times_era5[1])
 
 # Manually fix the start date at a time before which we have the data already
-final_date = '2020-12-01'
+#final_date = '2020-11-01'
 
 # Convert to datetimes
 start_date = datetime.strptime(start_date, '%Y-%m-%d')
@@ -99,7 +99,7 @@ def download_era5(start, end):
     cs.download_era5_surface_level_data_to_netcdf(coords_era5, start, end, temp_folder/'ERA5'/'1_download'/f'ERA5_{yyyy_mm}_surface_variables.nc')
     cs.download_era5_pressure_level_data_to_netcdf(coords_era5, start, end, temp_folder/'ERA5'/'1_download'/f'ERA5_{yyyy_mm}_pressure_variables.nc')
     
-    return print('Download successful')
+    return print(f'Download {yyyy_mm} successful')
 
 # Number of threads or processes to use
 num_workers = 5  # Adjust as needed

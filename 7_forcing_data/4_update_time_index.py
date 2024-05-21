@@ -68,6 +68,9 @@ all_files = raw_files + lump_files + dist_files
 #  show consistent LSTs for IV and DV observations, and for CAN we only have DV LST
 #  anyway.
 lst = row['dv_flow_obs_timezone']
+if lst == 'NST':
+    print(f'NST found for {row.Station_id}, switching to AST')
+    lst = 'AST' # set Newfoundland Standard Time (UTC-3h30) to Atlantic Standard Time (UTC-4h), because we only have forcing at whole hours
 utc = cs.tz_abbreviation_to_utc(lst) # e.g. 'UTC-04'
 offset = cs.relative_utc_to_float_offset_in_hours(utc) # e.g. -4.0
     
@@ -79,7 +82,7 @@ for file in all_files:
     
     # create a backup copy of the file in case processing ends halfway through a file
     backup_file = file.replace('.nc','_BACKUP.nc')
-    shutil.copy2(file,backup_file);
+    shutil.copy2(file,backup_file)
     
     # Update times
     with nc4.Dataset(file, 'a') as f:
