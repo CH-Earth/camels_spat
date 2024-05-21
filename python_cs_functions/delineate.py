@@ -11,6 +11,11 @@ def prepare_delineation_outputs(df,i,data_path):
     # Get identifiers
     country = df.iloc[i].Country
     basin_id = df.iloc[i].Station_id
+
+    # Check that USA basins have a leading zero when needed
+    if country == 'USA':
+        basin_id = f'{basin_id:>08}'
+        
     full_id = country + '_' + basin_id
     
     # Construct the paths

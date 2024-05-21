@@ -131,10 +131,7 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     m_per_km = 1000 # m km-1
     
     # Find the data source
-    if row['Country'] == 'CAN':
-        source = 'WSC'
-    elif row['Country'] == 'USA':
-        source = 'USGS'
+    source = 'USGS/WSC'
     
     # Load observations
     hyd_file = hyd_folder / f'{basin_id}_daily_flow_observations.nc'
@@ -168,7 +165,7 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     l_index.append( ('Hydrology', 'num_years_hyd ', 'years', '-') )
     
     # Signatures
-    calculate_signatures(hyd, pre, source, l_values, l_index)
+    l_values, l_index = calculate_signatures(hyd, pre, source, l_values, l_index)
     
     return l_values, l_index
 
@@ -214,9 +211,9 @@ def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, 
     area= row['Basin_area_km2']
     src = row['Station_source']
     l_values.append(lat)
-    l_index.append(('Topography', 'gauge_lat',  'degrees', f'{src}'))
+    l_index.append(('Topography', 'gauge_lat',  'degrees', 'USGS/WSC'))
     l_values.append(lon)
-    l_index.append(('Topography', 'gauge_lon',  'degrees', f'{src}'))
+    l_index.append(('Topography', 'gauge_lon',  'degrees', 'USGS/WSC'))
     l_values.append(area)
     l_index.append(('Topography', 'basin_area', 'km^2', 'MERIT Hydro'))
 
@@ -318,7 +315,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     ds = subset_dataset_to_max_full_years(ds)
     num_years = len(ds.groupby('time.year'))
     l_values.append(num_years)
-    l_index.append( ('Climate', 'num_years_era5 ', 'years', 'ERA5') )
+    l_index.append( ('Climate', 'num_years_era5', 'years', 'ERA5') )
     
     # --- Annual statistics (P, PET, T, aridity, seasonality, temperature, snow)
     # P
@@ -1203,15 +1200,15 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     variable  = 'q_obs'
     no_flow_threshold = 0 # mm d-1
     no_flow_condition = hyd[variable] <= no_flow_threshold
-    l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     low_flow_threshold = 0.2 * hyd['q_obs'].mean() # mm d-1
     low_flow_condition = hyd[variable] < low_flow_threshold
-    l_values,l_index   = calculate_flow_period_stats('flow',low_flow_condition,'low',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index   = calculate_flow_period_stats('flow',low_flow_condition,'low',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     high_flow_threshold = 9 * hyd['q_obs'].median() # mm d-1
     high_flow_condition = hyd[variable] > high_flow_threshold
-    l_values,l_index    = calculate_flow_period_stats('flow',high_flow_condition,'high',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index    = calculate_flow_period_stats('flow',high_flow_condition,'high',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     return l_values,l_index
 
@@ -1351,13 +1348,13 @@ def get_river_attributes(riv_str, l_values, l_index, area):
     
     # Order
     l_values.append(riv_order)
-    l_index.append(('Topography', 'steam_order_max',  '-', 'MERIT Hydro Basins'))
+    l_index.append(('Topography', 'stream_order_max',  '-', 'MERIT Hydro Basins'))
 
     # Derived
     l_values.append(density)
-    l_index.append(('Topography', 'stream_density',  'km^-1', 'Derived'))
+    l_index.append(('Topography', 'stream_density',  'km^-1', 'MERIT Hydro, MERIT Hydro Basins'))
     l_values.append(elongation)
-    l_index.append(('Topography', 'elongation_ratio','-', 'Derived'))
+    l_index.append(('Topography', 'elongation_ratio','-', 'MERIT Hydro, MERIT Hydro Basins'))
     
     return l_values,l_index
 
