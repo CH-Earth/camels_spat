@@ -1,4 +1,5 @@
 # Average forcing grids into HRUs
+import os
 import glob
 import shutil
 import sys
@@ -7,11 +8,11 @@ from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
-# --- Reruns 2024-05-20
+# --- Reruns 2024-05-21
 # These fix various small errors discovered during data use
 rerun_file = Path('/globalhome/wmk934/HPC/camels_spat/7_forcing_data/forcing_check_logs/reruns_20240516.csv')
 reruns = pd.read_csv(rerun_file)
-# --- Reruns 2024-05-20
+# --- Reruns 2024-05-21
 
 # --- Warnings
 import warnings
@@ -58,14 +59,14 @@ else:
 # Define cs_meta row
 row = cs_meta.iloc[ix] # needs to be between 0  and 1697
 
-# --- Reruns 2024-05-19
+# --- Reruns 2024-05-21
 this_basin = row['Country'] + '_' + row['Station_id']
 if this_basin not in reruns['basin'].values:
     print(f'No reruns for basin {this_basin}. Exiting.')
     sys.exit(0) # with next station, because we have no reruns for this station. Error code 0: clean exit, no problems
 else:
     print(f'Running reruns for basin {this_basin}.')
-# --- Reruns 2024-05-19
+# --- Reruns 2024-05-21
 
 # Set the spacing
 era_spacing = 0.25
@@ -104,8 +105,8 @@ cs.add_geopotential_to_era5_grid(era_invariant[0], era_grid_shp)
 esmr_temp = cs.prepare_easymore_temp_folder(row.Country, row.Station_id, Path(data_path)/cs_basin_folder)
 
 # Check if can do the remapping with EASYMORE with files as-is, and act accordingly
-# reruns 2024-05-20: disabling ERA5 because the error we're fixing occurred with the EM-Earth forcing
-era5_can_remap = cs.check_can_remap_as_is(era_merged_files[0]) # we can assume that if this applies to one file, it applies to all
+# reruns 2024-05-21: disabling ERA5 because the error we're fixing occurred with the EM-Earth forcing
+#era5_can_remap = cs.check_can_remap_as_is(era_merged_files[0]) # we can assume that if this applies to one file, it applies to all
 #if era5_can_remap:
 #    print('Remapping ERA5')
 #    era_lump_esmr = cs.easymore_workflow('ERA5', 'lumped', esmr_temp, era_grid_shp, shp_lump_path, lump_fold, era_merged_files)
@@ -117,31 +118,39 @@ era5_can_remap = cs.check_can_remap_as_is(era_merged_files[0]) # we can assume t
 #    era_dist_esmr = cs.easymore_workflow_with_cell_padding('ERA5', 'dist',   esmr_temp, era_grid_shp, shp_dist_path, dist_fold, 
 #                                                        era_merged_files, grid_spacing=era_spacing)
 #
-# Temporary lines for reruns - we need these easymore objects for later plotting
-era_lump_esmr, _ = cs.get_easymore_settings('ERA5', 'lumped', era_grid_shp, shp_lump_path, esmr_temp, lump_fold)
-era_lump_esmr.source_nc = era_merged_files[-1] 
-era_dist_esmr, _ = cs.get_easymore_settings('ERA5', 'dist', era_grid_shp, shp_dist_path, esmr_temp, dist_fold)
-era_dist_esmr.source_nc = era_merged_files[-1] 
-# reruns 2024-05-20
+# reruns 2024-05-21
+
+# reruns 2024-05-21
+# to make sure we don't end up with any unwanted leftovers, remove any existing em-earth and em_earth files
+old_em_earth_files = glob.glob(str(lump_fold/'EM_Earth_*.nc')) + glob.glob(str(dist_fold/'EM_Earth_*.nc')) + \
+                     glob.glob(str(lump_fold/'EM-Earth_*.nc')) + glob.glob(str(dist_fold/'EM-Earth_*.nc'))
+for file in old_em_earth_files:
+    if 'era5' in file.lower(): # just to make sure...
+        continue 
+    else:
+        os.remove(file)
+# reruns 2024-05-21
 
 # Repeat for EM-Earth: because EM-Earth has a smaller spacing than ERA5, it is possible that we can remap one but not the other, hence separate
 eme_can_remap = cs.check_can_remap_as_is(eme_merged_files[0]) # we can assume that if this applies to one file, it applies to all
 if eme_can_remap:
     print('Remapping EM-Earth')
-    eme_lump_esmr = cs.easymore_workflow('EM-Earth', 'lumped', esmr_temp, eme_grid_shp, shp_lump_path, lump_fold, eme_merged_files)
-    eme_dist_esmr = cs.easymore_workflow('EM-Earth', 'dist',   esmr_temp, eme_grid_shp, shp_dist_path, dist_fold, eme_merged_files)
+    eme_lump_esmr = cs.easymore_workflow('EM_Earth', 'lumped', esmr_temp, eme_grid_shp, shp_lump_path, lump_fold, eme_merged_files)
+    eme_dist_esmr = cs.easymore_workflow('EM_Earth', 'dist',   esmr_temp, eme_grid_shp, shp_dist_path, dist_fold, eme_merged_files)
 else:
-    eme_lump_esmr = cs.easymore_workflow_with_cell_padding('EM-Earth', 'lumped', esmr_temp, eme_grid_shp, shp_lump_path, lump_fold, 
+    eme_lump_esmr = cs.easymore_workflow_with_cell_padding('EM_Earth', 'lumped', esmr_temp, eme_grid_shp, shp_lump_path, lump_fold, 
                                                         eme_merged_files, grid_spacing=eme_spacing)
-    eme_dist_esmr = cs.easymore_workflow_with_cell_padding('EM-Earth', 'dist',   esmr_temp, eme_grid_shp, shp_dist_path, dist_fold, 
+    eme_dist_esmr = cs.easymore_workflow_with_cell_padding('EM_Earth', 'dist',   esmr_temp, eme_grid_shp, shp_dist_path, dist_fold, 
                                                         eme_merged_files, grid_spacing=eme_spacing)
 
 # Create a graphical check of what we just did
-fig_file = esmr_temp.parent / f'{row.Country}_{row.Station_id}_spatial_averaging.png'
-cs.era5_eme_easymore_plotting_loop( [era_lump_esmr, era_dist_esmr, eme_lump_esmr, eme_dist_esmr], esmr_temp, fig_file )
-
-fig_file = Path('/gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/TEMP_images_forcing_averaging') / f'{row.Country}_{row.Station_id}_spatial_averaging.png'
-cs.era5_eme_easymore_plotting_loop( [era_lump_esmr, era_dist_esmr, eme_lump_esmr, eme_dist_esmr], esmr_temp, fig_file )
+# reruns 2024-05-21 - disable plots
+#fig_file = esmr_temp.parent / f'{row.Country}_{row.Station_id}_spatial_averaging.png'
+#cs.era5_eme_easymore_plotting_loop( [era_lump_esmr, era_dist_esmr, eme_lump_esmr, eme_dist_esmr], esmr_temp, fig_file )
+#
+#fig_file = Path('/gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/TEMP_images_forcing_averaging') / f'{row.Country}_{row.Station_id}_spatial_averaging.png'
+#cs.era5_eme_easymore_plotting_loop( [era_lump_esmr, era_dist_esmr, eme_lump_esmr, eme_dist_esmr], esmr_temp, fig_file )
+# reruns 2024-05-21
 
 # Clean up
 shutil.rmtree(esmr_temp)
