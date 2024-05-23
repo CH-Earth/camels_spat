@@ -14,7 +14,8 @@ meta_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/came
 cs_meta = pd.read_csv(meta_path)
 
 # Define csv location
-rerun_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/forcing_reruns')
+rerun_folder = '20240522_checks'
+rerun_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/forcing_reruns') / rerun_folder
 csv_files = sorted(glob.glob(str(rerun_path) + '/*.csv'))
 
 # Read in all CSV files

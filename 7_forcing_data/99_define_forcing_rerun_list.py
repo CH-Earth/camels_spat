@@ -14,7 +14,8 @@ from pathlib import Path
 start = time.time()
 
 # Define csv location
-rerun_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/forcing_reruns')
+rerun_folder = '20240522_checks'
+rerun_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/forcing_reruns') / rerun_folder
 rerun_path.mkdir(parents=True, exist_ok=True)
 
 ## Functions
@@ -79,9 +80,9 @@ def has_variables_in_files(files,data):
         expected = ['mtpr', 'msdwswrf', 'msdwlwrf',
                     'msnswrf', 'msnlwrf', 'mper', 
                     't', 'u', 'v', 'q',
-                    'e', 'rh', 'w', 'phi']
+                    'e', 'rh', 'w', 'phi', 'time_bnds']
     elif data == 'EM_Earth':
-        expected = ['prcp', 'tmean']
+        expected = ['prcp', 'tmean', 'time_bnds']
 
     # Initialize flags: we only need to find one missing variable to fail
     # Print statements will give further details in case of multiple files
@@ -110,6 +111,17 @@ def remove_invariants_from_list(files):
     '''Checks if an ERA5 invariants file is present and removes if so'''
     return [file for file in files if 'invariant' not in file]
 
+def check_if_times_in_lst(files):
+    '''Checks if the time variable is in local standard time, under the assumption that the first time entry in each file is not at midnight'''
+    for file in files:
+        data = xr.open_dataset(file)
+        time = data['time'].values[0] # e.g. numpy.datetime64('1986-07-31T20:00:00.000000000')
+        hour = time.astype('datetime64[h]').astype(int) % 24 # remainder after division, i.e. 0 if midnight
+        if hour == 0:
+            print(f'Error: Time series starts at midnight in {file}. This implies conversion to LST is not done.')
+            return False
+    return True
+
 # Main functions
 def check_forcing_file_status(folder, data):
     files = list_forcing_files(folder,data)
@@ -117,7 +129,8 @@ def check_forcing_file_status(folder, data):
     dates = convert_filenames_to_yyyymm_strings(files)
     is_consecutive = are_consecutive_dates(dates, debug=False)
     has_variables, has_nans = has_variables_in_files(files, data)
-    return is_consecutive,has_variables, has_nans
+    in_lst = check_if_times_in_lst(files)
+    return is_consecutive,has_variables, has_nans, in_lst
 
 def check_invariant_status(folder, data):
     files = list_forcing_files(folder,data)
@@ -154,7 +167,7 @@ for basin_folder in basin_folders:
         for dataset in ['ERA5','EM_Earth']:
             # Check file status
             data_folder = main_folder / basin_folder / 'forcing' / spatial_res
-            is_consecutive,has_variables, has_nans = check_forcing_file_status(data_folder, dataset)
+            is_consecutive,has_variables, has_nans, times_in_lst = check_forcing_file_status(data_folder, dataset)
             if not is_consecutive:
                 reruns.append(basin_folder)
                 reasons.append(f'Non-consecutive dates in {spatial_res} {dataset}')
@@ -164,6 +177,9 @@ for basin_folder in basin_folders:
             if has_nans:
                 reruns.append(basin_folder)
                 reasons.append(f'NaNs in variables in {spatial_res} {dataset}')
+            if not times_in_lst:
+                reruns.append(basin_folder)
+                reasons.append(f'Times may not be converted to LST in {spatial_res} {dataset}')
             # Check invariant status
             if spatial_res == 'raw' and dataset == 'ERA5':
                 has_invariant = check_invariant_status(data_folder, dataset)
@@ -173,41 +189,45 @@ for basin_folder in basin_folders:
     print(f'Finished checking {basin_folder}')
     print(f'Reruns: {reruns}')
     print(f'Reasons: {reasons}')
-           
-# Workflow - time zones is NST?
-# 1. Open the metadata file
-# 2. Check if the time zone is NST
-meta_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/camels_spat_metadata.csv')
-meta = pd.read_csv(meta_path)
-mask = (meta['Country'] == basin[0:3]) & (meta['Station_id'] == basin[4:])
-if len(meta.loc[mask]) == 0:
-    print(f'Error: Basin {basin} not found in metadata')
-else:
-    if meta.loc[mask,'dv_flow_obs_timezone'].values[0] == 'NST':
-        reruns.append(basin)
-        reasons.append('Time zone is NST')
 
-# Workflow - check if we had to remove tiny HRUs from this basin
-# We updated these after manual checks in: ./5_forcing/5_fix_minor_errors.py.
-# We can ignore the 'double_comid' issue, because that relates to duplicated 
-# river segments, not HRUs. issue_dict coped directly from the file above, 
-# and commented the basins with ONLY 'double_comid' issues.
-issue_dict = {'CAN_02GG003': ['hru_area'], 
-              'CAN_04FC001': ['hru_area', 'double_comid'], 
-              'CAN_07AD002': ['hru_area'], 
-              'CAN_07HC002': ['hru_area'], 
-              'CAN_08NE077': ['hru_area'], 
-              'CAN_08NH007': ['hru_area'], 
-              'USA_07142300':['hru_area'], 
-              'USA_08198500':['hru_area'],
-              #'CAN_06AB001': ['double_comid'],
-              #'CAN_06BB005': ['double_comid'],
-              #'CAN_08MH076': ['double_comid']
-              }
+##### SPECIFIC CHECKS 2024-05-16 #####
+# We can disable these now (2024-05-22), because we should have addressed the two issues below after out 2024-05-17 to 2024-05-22 reruns.
+# ---------------------------------------------------------------------------------------------------------------------------------------      
+# # Workflow - time zones is NST?
+# # 1. Open the metadata file
+# # 2. Check if the time zone is NST
+# meta_path = Path('/project/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/camels_spat_metadata.csv')
+# meta = pd.read_csv(meta_path)
+# mask = (meta['Country'] == basin[0:3]) & (meta['Station_id'] == basin[4:])
+# if len(meta.loc[mask]) == 0:
+#     print(f'Error: Basin {basin} not found in metadata')
+# else:
+#     if meta.loc[mask,'dv_flow_obs_timezone'].values[0] == 'NST':
+#         reruns.append(basin)
+#         reasons.append('Time zone is NST')
 
-if basin in issue_dict.keys():
-    reruns.append(basin)
-    reasons.append('Basin had tiny HRUs removed')
+# # Workflow - check if we had to remove tiny HRUs from this basin
+# # We updated these after manual checks in: ./5_forcing/5_fix_minor_errors.py.
+# # We can ignore the 'double_comid' issue, because that relates to duplicated 
+# # river segments, not HRUs. issue_dict coped directly from the file above, 
+# # and commented the basins with ONLY 'double_comid' issues.
+# issue_dict = {'CAN_02GG003': ['hru_area'], 
+#               'CAN_04FC001': ['hru_area', 'double_comid'], 
+#               'CAN_07AD002': ['hru_area'], 
+#               'CAN_07HC002': ['hru_area'], 
+#               'CAN_08NE077': ['hru_area'], 
+#               'CAN_08NH007': ['hru_area'], 
+#               'USA_07142300':['hru_area'], 
+#               'USA_08198500':['hru_area'],
+#               #'CAN_06AB001': ['double_comid'],
+#               #'CAN_06BB005': ['double_comid'],
+#               #'CAN_08MH076': ['double_comid']
+#               }
+
+# if basin in issue_dict.keys():
+#     reruns.append(basin)
+#     reasons.append('Basin had tiny HRUs removed')
+# End commenting this out for 2024-05-22 check of re-runs.
 
 # Create a dataframe for storage
 out = pd.DataFrame(data={'basin':reruns, 'reason':reasons})
