@@ -1,6 +1,7 @@
 # Load the geostack so we have most of what we need
 #module load StdEnv/2020  gcc/9.3.0  openmpi/4.0.3 geo-stack/2022a # This works
-module load StdEnv/2020  gcc/9.3.0  openmpi/4.0.3 gdal/3.5.1 libspatialindex/1.8.5 geo-stack/2022 geo-stack/2022a
+module load StdEnv/2020  gcc/9.3.0  openmpi/4.0.3 gdal/3.5.1 libspatialindex/1.8.5 geo-stack/2022a
+
 # Define the location of the config file
 # --------------------------------------
 config="../0_config/config.txt"
