@@ -803,6 +803,14 @@ def add_time_bnds(file, dataset=[], timezone=[]):
         # Check that a source dataset is specified
         assert (dataset.lower() == 'era5') | (dataset.lower() == 'em-earth'), \
             f'add_time_bnds() contains no settings for dataset = {dataset}'
+        
+        # Check that we haven't already added bounds to this
+        if 'time_bnds' in f.variables:
+            if 'add_time_bnds()' in f.History:
+                print(f'WARNING: time_bnds already exists in {file}, added as part of CS workflow. Skipping.')
+            else:
+                print(f'WARNING: time_bnds already exists in {file}, source unknown. Skipping.')
+            return
 
         # Connect variable 'time_bounds' to variable 'time' through time attribute 'bounds'
         f['time'].setncattr('bounds','time_bnds')
@@ -831,3 +839,4 @@ def add_time_bnds(file, dataset=[], timezone=[]):
         old_history = f.History
         hist = f'{old_history} {new_history}'
         f.setncattr('History',hist)
+    

@@ -86,7 +86,7 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
     if data == 'ERA5':
         esmr.var_names = ['msdwlwrf', 'msnlwrf', 'msdwswrf', 'msnswrf', 'mtpr', 'sp',
                           'mper', 't', 'q', 'u', 'v', 'e', 'rh', 'w'] # variable names of forcing data - hardcoded because we prescribe them during ERA5 merging
-    if data == 'EM-Earth':
+    if data == 'EM_Earth':
         esmr.var_names = ['tmean', 'prcp'] 
 
     # EASYMORE uses a default name for the remap CSV file based on esmr.case_name:
@@ -234,6 +234,14 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
     '''Takes an existing netCDF4 file with latitude and longitude dimensions of size 1, and adds np.nan cells around this'''
     
     with xr.open_dataset(file) as ds:
+
+        # Drop any time_bnds and nbdnds variables if exist
+        if 'time_bnds()' in ds.History:
+            print('Detected a file that originated from a step later in this workflow. Dropping time_bnds and nbnds variables for the temporary padded file.')
+            if 'time_bnds' in ds.variables:
+                ds = ds.drop_vars('time_bnds')
+            if 'nbnds' in ds.dims:
+                ds = ds.drop_dims('nbnds')
 
         # Get existing latitude and longitude values, and define the extended coordinates
         old_lat = ds[lat_dim].values

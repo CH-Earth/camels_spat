@@ -1320,6 +1320,11 @@ def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=Fal
             assert new_value == phi_test, f'result {new_value} does not match known result {phi_test}, for u = {u_test}, v = {v_test}'
         print('-- derive_wind_direction() test completed successfully')
 
+    # 0. Check if the variable already exists
+    if new_name in file.variables:
+        print(f'!!! Warning: derive_wind_direction(): variable {new_name} already exists in file. Exiting.')
+        return file
+
     # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
     u = file.variables[u_wind][:]
     v = file.variables[v_wind][:]
