@@ -63,14 +63,15 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
 
 
 # Subset variables
-def process_rdrs(file_url):
-    file_name = file_url.split('/')[-1].strip()
-    file_in = str(temp_folder / file_name) # str() for next replace and use with nc4
-    file_out = file_in.replace('12.nc','.nc') # we know all source files have the '12'[h] in the name
-    cs.remove_vars_from_rdrs_download(file_in,file_out,rdrs_vars_to_keep)
-    os.remove(file_in) # remove the original file
-    print(f'Processed {file_name}')
-    return
+# We'll do this after using datatool to subset to basins
+#def process_rdrs(file_url):
+#    file_name = file_url.split('/')[-1].strip()
+#    file_in = str(temp_folder / file_name) # str() for next replace and use with nc4
+#    file_out = file_in.replace('12.nc','.nc') # we know all source files have the '12'[h] in the name
+#    cs.remove_vars_from_rdrs_download(file_in,file_out,rdrs_vars_to_keep)
+#    os.remove(file_in) # remove the original file
+#    print(f'Processed {file_name}')
+#    return
 
 # DEV check - all True in test
 #import xarray as xr

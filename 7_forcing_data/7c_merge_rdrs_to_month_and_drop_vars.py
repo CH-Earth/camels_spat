@@ -56,8 +56,8 @@ def merge_daily_to_monthly(input_dir, output_dir, variables_to_keep, month_index
 
     # Continue with regular processing, though monthly_files may contain only 1 year now
     for month, files in monthly_files.items():
-        print(f"Processing month: {month}")
         output_file = os.path.join(output_dir, f"{month}.nc")
+        print(f"Processing month: {month} into {out}")
 
         # Skip if the file already exists
         if os.path.exists(output_file):
