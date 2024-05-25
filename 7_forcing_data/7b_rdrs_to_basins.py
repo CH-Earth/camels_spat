@@ -48,11 +48,12 @@ cs_unusable = pd.read_csv(cs_meta_path / cs_unusable_name, dtype={'Station_id': 
 
 # --- Processing
 # Get the array index from the command-line argument
-if len(sys.argv) != 2:
-    print("Usage: python 7b_rdrs_to_basins.py <array_index>")
+if len(sys.argv) != 3:
+    print("Usage: python 7b_rdrs_to_basins.py <array_index> <temp_dir>")
     sys.exit(1)
 else:
     ix = int(sys.argv[1])
+    tmp_dir = sys.argv[2]
 
 # Define cs_meta row
 row = cs_meta.iloc[ix] # needs to be between 0  and 1697
@@ -115,7 +116,8 @@ dt_string = f'{dt_folder}/extract-dataset.sh' \
             f' --end-date="{dt_final_date}"' \
             f' --variable="{rdrs_vars}"'\
             f' --prefix="{basin_id}_subset_"' \
-            f' --shape-file="{str(shp_lump_path)}"'
+            f' --shape-file="{str(shp_lump_path)}"'\
+            f' --cache="{tmp_dir}"'
             #f' --lat-lims={bounds[1]},{bounds[3]}' \
             #f' --lon-lims={bounds[0]},{bounds[2]}'
                       
