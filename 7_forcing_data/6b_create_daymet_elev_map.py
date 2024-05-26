@@ -126,8 +126,6 @@ elevation_ds.to_netcdf(daymet_folder / elev_file)
 
 # --- Make a plot to check
 import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 
 # file name
 elev_fig = daymet_folder / 'elevation_map.png'
