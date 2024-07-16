@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import rasterio
-import xarray as xarray
+import xarray as xr
 from pathlib import Path
 from osgeo import gdal
 
@@ -16,7 +16,7 @@ lcc_file = 'merit_hydro_elv_lcc.tif'
 # --- Prepare the DEM in LCC
 
 # Open the NetCDF file
-ds = xarray.open_dataset(daymet_folder / dayl_file)
+ds = xr.open_dataset(daymet_folder / dayl_file)
 
 # Extract the projection information
 proj_attr = ds['lambert_conformal_conic'].attrs
