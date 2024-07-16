@@ -47,11 +47,11 @@ fi
 
 # Update the basics
 # -----------------
-python -m pip install --upgrade pip
-python -m pip install --upgrade wheel
-python -m pip install --upgrade setuptools
-python -m pip install cdsapi baseflow rasterstats
-python -m pip install --upgrade pandas xarray 
-python -m pip install --upgrade baseflow rasterstats
-python -m pip install --upgrade numpy numba
-python -m pip install --upgrade geopandas
+#python -m pip install --upgrade pip
+#python -m pip install --upgrade wheel
+#python -m pip install --upgrade setuptools
+python -m pip install baseflow beautifulsoup4 cdsapi easymore==2.0.0 rasterstats shapely==2.0.1
+#python -m pip install --upgrade pandas xarray 
+#python -m pip install --upgrade baseflow rasterstats
+#python -m pip install --upgrade numpy numba
+#python -m pip install --upgrade geopandas

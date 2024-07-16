@@ -2,7 +2,7 @@ baseflow
 cdsapi
 cligj
 dask
-easymore
+easymore==2.0.0
 fiona
 geopandas
 hs_restclient
