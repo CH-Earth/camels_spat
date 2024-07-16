@@ -1,5 +1,6 @@
 # Uses DataTool to subset RDRS data to basins
 import glob
+import math
 import os
 import sys
 import subprocess
@@ -58,24 +59,48 @@ else:
 # Define cs_meta row
 row = cs_meta.iloc[ix] # needs to be between 0  and 1697
 
+# Get shapefile path to determine download coordinates, and forcing destination path
+basin_id, shp_lump_path, shp_dist_path, _, _ = cs.prepare_delineation_outputs(cs_meta, ix, Path(data_path)/cs_basin_folder)
+raw_fold, _, _ = cs.prepare_forcing_outputs(cs_meta, ix, Path(data_path)/cs_basin_folder) # Returns folders only, not file names
+print('--- Now running basin {}. {}'.format(ix, basin_id))
+
 # Check if we need to run for this station at all
 missing = cs.flow_obs_unavailable(cs_unusable, row.Country, row.Station_id)
 if 'iv' in missing and 'dv' in missing: 
     print(f'No flow observations for basin {basin_id}. Exiting.')
     sys.exit(0) # with next station, because we have no observations at all for this station. Error code 0: clean exit, no problems
 
-# Get shapefile path to determine download coordinates, and forcing destination path
-basin_id, shp_lump_path, shp_dist_path, _, _ = cs.prepare_delineation_outputs(cs_meta, ix, Path(data_path)/cs_basin_folder)
-raw_fold, _, _ = cs.prepare_forcing_outputs(cs_meta, ix, Path(data_path)/cs_basin_folder) # Returns folders only, not file names
-print('--- Now running basin {}. {}'.format(ix, basin_id))
 
 # Specifically for RDRS, create a temporary 'day' folder where we can keep 
 #  these files before merging them to monthly later
 temp_day_folder = raw_fold / 'rdrs_day'
 temp_day_folder.mkdir(parents=True, exist_ok=True)
 
+# Update 2024-06-18: We need to use the bounds after all (before
+# we simply gave the shapefile to datatool) because:
+# 1. We later process the gridded files into basin averages with 
+#    easymore: with rotated grids easymore cannot estimate the 
+#    edges of the outer grid cells, and thus doesn't use those. 
+#    Therefore we need an extra buffer so that easymore can create
+#    a forcing grid that actually covers the entire basin.
+#
 # From shapefile, get bounding coordinates
 bounds = cs.find_shapefile_bounds(shp_lump_path)
+
+# Apply an appropriate buffer. RDRS is at 10km resolution, which
+# is approximately 0.08983 degrees latitude, and 
+# 10/(111.32 * cos(lat)) longitude
+lat_buffer = 0.08983
+lat = math.radians(row['Station_lat'])
+lon_buffer = 10/(111.32 * math.cos(lat))
+
+# Applying a 2-cell buffer should theoretically be enough, 
+# but let's go for 3 anyway
+n_buffer = 3
+bounds[0] = bounds[0] - n_buffer*lon_buffer
+bounds[1] = bounds[1] - n_buffer*lat_buffer
+bounds[2] = bounds[2] + n_buffer*lon_buffer
+bounds[3] = bounds[3] + n_buffer*lat_buffer
 
 # From meta-data, get flow obs period
 times_flow = cs.find_flow_obs_times_from_metadata(row, missing)
@@ -116,10 +141,10 @@ dt_string = f'{dt_folder}/extract-dataset.sh' \
             f' --end-date="{dt_final_date}"' \
             f' --variable="{rdrs_vars}"'\
             f' --prefix="{basin_id}_subset_"' \
-            f' --shape-file="{str(shp_lump_path)}"'\
-            f' --cache="{tmp_dir}"'
-            #f' --lat-lims={bounds[1]},{bounds[3]}' \
-            #f' --lon-lims={bounds[0]},{bounds[2]}'
+            f' --cache="{tmp_dir}"' \
+            f' --lat-lims={bounds[1]},{bounds[3]}' \
+            f' --lon-lims={bounds[0]},{bounds[2]}'
+            #f' --shape-file="{str(shp_lump_path)}"'
                       
 # use subprocess to run the datatool command
 print(f'Running datatool command: {dt_string}')
