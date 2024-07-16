@@ -1279,6 +1279,8 @@ def make_nc_variable(file, name, units, values, long_name='', standard_name='', 
         file.createVariable(name,'f4',('time','latitude','longitude'), fill_value = False, zlib=True, shuffle=True)
     elif dims.lower() == 'hru':
         file.createVariable(name,'f4',('time','hru'), fill_value = False, zlib=True, shuffle=True)
+    elif dims.lower() == 'rlat/rlon':
+        file.createVariable(name,'f4',('time','rlat','rlon'), fill_value = False, zlib=True, shuffle=True)
     else:
         print(f'!!! Warning: make_nc_variable(): dimensions option {dims} not recognized. Exiting.')
         return file
@@ -1288,15 +1290,174 @@ def make_nc_variable(file, name, units, values, long_name='', standard_name='', 
     file[name].setncattr('units',units)
     if long_name: file[name].setncattr('long_name',long_name)
     if standard_name: file[name].setncattr('standard_name', standard_name)
+    if dims.lower() == 'rlat/rlon': 
+        file[name].setncattr('grid_mapping', 'rotated_pole') # matches RDRS existing var attributes
+        file[name].setncattr('coordinates', 'lon lat') # add the secondary RDRS coordinate
 
     # 3. Copy the data SECOND
     file[name][:] = values
 
     # 4. Update history
     if history:
-        current_history = file.getncattr('History')
-        new_history = f'{current_history}{history}'
-        file.setncattr('History', new_history)
+        # check if file has a History or history attribute
+        if 'History' in file.ncattrs():
+            current_history = file.getncattr('History')
+            new_history = f'{current_history}{history}'
+            file.setncattr('History', new_history)
+        elif 'history' in file.ncattrs():
+            current_history = file.getncattr('history')
+            new_history = f'{current_history}{history}'
+            file.setncattr('history', new_history)
+    
+    return file
+
+def calculate_penman_monteith_pet(airpres, airtemp, relhum, swdown, lwdown, windspd, 
+                                  windht=10, groundheat=0,
+                                  to_kg_m2_s=False):
+    
+    # Calculation steps to find Penman-Monteith PET. The following is
+    # mostly based on Zotarelli et al, 2009. Step by Step Calculation 
+    # of the Penman-Monteith Evapotranspiration (FAO-56 Method).
+    #
+    # Zotarelli, L., Dukes, M. D., Romero, C. C., Migliaccio, K. W., and
+    # Morgan, K. T.: Step by step calculation of the Penman-Monteith
+    # Evapotranspiration (FAO-56 Method). University of Florida Extension,
+    # AE459, available at: http://edis.ifas.ufl.edu (last access:
+    # 21 January 2018), 10 pp., 2009.
+    
+    # Main equation, modified for hourly data:
+    # -----------------------------------------
+    # PET    = (0.408 * delta * (Rn - G) + gamma * ((900/24) / (T + 273) * u2 * (es - ea))) / (delta + gamma * (1 + 0.34 * u2))
+    #
+    # PET    = potential evapotranspiration [mm/h]
+    # delta  = slope of the saturation vapor pressure-temperature relationship [kPa/oC]
+    # Rn     = net radiation at the crop surface [MJ/m2/h]
+    # G      = soil heat flux density [MJ/m2/h]
+    # gamma  = psychrometric constant [kPa/oC]
+    # T      = air temperature at 2 m height [oC]
+    # u2     = wind speed at 2 m height [m/s]
+    # es     = saturation vapor pressure [kPa]
+    # ea     = actual vapor pressure [kPa]
+    
+    # Inputs
+    # ------
+    # airpres  = air pressure           (RDRS: RDRS_v2.1_P_P0_SFC)    [Pa]
+    # airtemp  = 2-m air temperature    (RDRS: RDRS_v2.1_P_TT_1.5m)   [K]
+    # relhum   = relative humidity      (RDRS: RDRS_v2.1_P_HR_1.5m)   [-]
+    # swdown   = shortwave radiation    (RDRS: RDRS_v2.1_P_FB_SFC)    [W/m2]
+    # lwdown   = longwave radiation     (RDRS: RDRS_v2.1_P_FI_SFC)    [W/m2]
+    # windspd  = wind speed             (RDRS: RDRS_v2.1_P_UVC_10m)   [m/s]
+    
+    # Optional inputs
+    # ------------
+    # windht   = wind height [m].           RDRS: 10 m
+    # groundheat = soil heat flux [MJ/m2/h] Assumed: 0
+    
+    # 0. Define constants
+    con_Cp = 1.013 * 10**(-3)  # Specific heat of air at constant pressure [MJ kg-1 oC-1]
+    con_eps = 0.622  # Ratio of the molecular weight of water vapor to dry air [-]
+    con_lam = 2.45  # Latent heat of vaporization of water [MJ kg-1]
+    con_albedo = 0.23  # Albedo
+    con_sigmaSB = 5.67 * 10**(-8)  # Stefan-Boltzmann constant [W m-2 K-4]
+    con_emissivity = 0.95  # Emissivity of the crop surface [-], still grass (Stull, Table 2-4)
+    
+    # Convert units
+    airpres = airpres / 1000  # [Pa] to [kPa]
+    airtemp = airtemp - 273.15  # [K] to [oC]
+    swdown = swdown * 3600 * 0.000001 # [W/m2] * [s hr-1] * [MJ J-1] = [MJ m-2 h-1]
+    lwdown = lwdown * 3600 * 0.000001 # [W/m2] to [MJ m-2 h-1]
+    
+    # 2. Convert wind speed to 2m
+    u2 = windspd*(4.87 / np.log(67.8 * windht - 5.42)) # [m/s]
+    
+    # 3. Calculate vapor pressure
+    # saturation vapor pressure
+    es = 0.6108 * np.exp((17.27 * airtemp) / (airtemp + 237.3)) # [kPa]
+    
+    # We need actual vapor pressure. We can get this from dewpoint
+    # temperature (Stull, 2018; Table 4-2b, Eq. 4.15), but calculating
+    # dewpoint temperature is a bit cumbersome. We can also get it from
+    # RDRS directly but this would mean redoing a lot of data processing,
+    # because we initially didn't include dewpoint in the data subset.
+    # Therefore, we will calculate it from relative humidity and saturation
+    # vapor pressure. Other equations left here for reference.
+    #
+    # actual vapor pressure from dewpoint temperature
+    #con_Rv_L = 1.844 * 10**(-4) # K-1
+    #con_e0 = 0.6113  # kPa
+    #con_T0 = 273.15  # K
+    #dewtemp = (1/con_T0 - con_Rv_L * np.log(e/con_e0))**(-1) # Alternative: obtain directly from RDRS
+    #ea = 0.6108 * np.exp((17.27 * dewtemp) / (dewtemp + 237.3)) # [kPa]
+    
+    # actual vapor pressure from relative humidity
+    ea = relhum * es # (Stull, 2018; Table 4-2b, Eq. 4.14a)
+    
+    # 4. Delta and gamma
+    # Psychometric constant
+    gamma = con_Cp * airpres / (con_eps * con_lam) # [kPa/oC]
+    
+    # Slope of the saturation vapor pressure-temperature relationship
+    delta = (4098 * es) / (airtemp + 237.3)**2 # [kPa/oC]
+    
+    # 5. Net radiation
+    # Net short net shortwave radiation, [MJ m-2 hr-1] - Zea2009 eq 29
+    Rns = (1 - con_albedo) * swdown
+    
+    # Estimated outgoing longwave radiation
+    lwup = con_emissivity * con_sigmaSB * (airtemp + 273.15)**4
+    lwup = lwup * 3600 * 0.000001 # [W/m2] = [J m-2 s-1] to [MJ m-2 h-1]
+    
+    # Net longwave radiation, [MJ m-2 hr-1]
+    Rnl = lwdown - lwup
+    
+    # Net radiation, [MJ m-2 hr-1]
+    Rn = Rns - Rnl
+    
+    # 6. Penman-Monteith PET [mm/hr]
+    pet = (0.408*delta*(Rn-groundheat) + gamma*((900/24)/(airtemp+273))*u2*(es-ea)) / (delta + gamma*(1+0.34*u2))  
+    
+    # 7. Set units
+    if to_kg_m2_s:
+        # [mm hr-1] * [m mm-1] * [hr s-1] * [kg m-3] = [kg m-2 s-1]
+        m_per_mm = 1/1000
+        hr_per_s = 1/3600
+        rho_water = 1000 # kg/m3
+        pet = pet * m_per_mm * hr_per_s * rho_water
+
+    return pet
+
+def derive_penman_monteith_pet(file, air_pressure='RDRS_v2.1_P_P0_SFC',
+                                     air_temperature='RDRS_v2.1_P_TT_1.5m',
+                                     relative_humidity='RDRS_v2.1_P_HR_1.5m',
+                                     shortwave_radiation='RDRS_v2.1_P_FB_SFC',
+                                     longwave_radiation='RDRS_v2.1_P_FI_SFC',
+                                     wind_speed='RDRS_v2.1_P_UVC_10m',
+                                     wind_height=10,
+                                     ground_heat=0,
+                                     new_name='PET',
+                                     dims='rlat/rlon',
+                                     to_kg_m2_s=False):
+    
+    # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
+    airpres = file.variables[air_pressure][:]
+    airtemp = file.variables[air_temperature][:]
+    relhum = file.variables[relative_humidity][:]
+    swdown = file.variables[shortwave_radiation][:]
+    lwdown = file.variables[longwave_radiation][:]
+    windspd = file.variables[wind_speed][:]
+    
+    # 2. Compute the new values
+    values_new = calculate_penman_monteith_pet(airpres, airtemp, relhum, swdown, lwdown, windspd, 
+                                               windht=wind_height, groundheat=ground_heat,
+                                               to_kg_m2_s=to_kg_m2_s)
+    
+    # 3. Define the other inputs
+    unit_new = 'mm hr**-1'
+    long_name = 'Potential evapotranspiration calculated with the Penman-Monteith method'
+    new_history = f' On {time.ctime(time.time())}: Derived PET using Penman-Monteith method.'
+    
+    # 4. Create the new variable
+    file = cs.make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
     
     return file
 
@@ -1422,7 +1583,7 @@ def derive_relative_humidity(file, air_temperature='t', vapor_pressure='e', new_
     file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
     return file
 
-def derive_vapor_pressure(file, air_pressure='sp', specific_humidity='q', Pa_to_kPa=True, new_name='e', approximate=False):
+def derive_vapor_pressure(file, air_pressure='sp', specific_humidity='q', Pa_to_kPa=True, new_name='e', approximate=False, dims='lat/lon'):
 
     '''Adds vapor pressure to a netCDF4 file containing air pressure and specific humidity'''
 
@@ -1447,11 +1608,11 @@ def derive_vapor_pressure(file, air_pressure='sp', specific_humidity='q', Pa_to_
 
     # 4. Define other inputs
     unit_new = 'kPa'
-    long_name = 'vapor pressure, computed from ERA5 specific humidity and surface pressure'
+    long_name = 'vapor pressure, computed from specific humidity and surface pressure'
     new_history = f' On {time.ctime(time.time())}: derive_vapor_pressure().'
 
     # 5. Make the variable
-    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history)
+    file = make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
     return file
 
 def derive_mean_wind_speed(file, var_1='u', var_2='v', new_name='w'):

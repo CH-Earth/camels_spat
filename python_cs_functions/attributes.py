@@ -19,8 +19,8 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
     '''Calculates attributes from SOILGRIDS maps'''
 
     # File specifiction
-    sub_folders = ['bdod',     'cfvo',       'clay',    'sand',    'silt',    'soc']
-    units       = ['cg cm^-3', 'cm^3 dm^-3', 'g kg^-1', 'g kg^-1', 'g kg^-1', 'dg kg^-1']
+    sub_folders = ['bdod',     'cfvo',       'clay',    'sand',    'silt',    'soc',      'porosity']
+    units       = ['cg cm^-3', 'cm^3 dm^-3', 'g kg^-1', 'g kg^-1', 'g kg^-1', 'dg kg^-1', '-']
     depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm']
     fields = ['mean', 'uncertainty']
     stats = ['mean', 'min', 'max', 'std']
@@ -30,6 +30,7 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
         for depth in depths:
             for field in fields:
                 tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
+                if not os.path.exists(tif): continue # porosity has no uncertainty field
                 zonal_out = zonal_stats(shp_str, tif, stats=stats)
                 scale,offset = read_scale_and_offset(tif)
                 l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
@@ -37,6 +38,32 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
                             ('Soil', f'{sub_folder}_{depth}_{field}_mean', f'{unit}', 'SOILGRIDS'),
                             ('Soil', f'{sub_folder}_{depth}_{field}_max',  f'{unit}', 'SOILGRIDS'),
                             ('Soil', f'{sub_folder}_{depth}_{field}_std',  f'{unit}', 'SOILGRIDS')]
+                
+    # Specifc processing for the conductivity fields
+    # We know that the conductivity estimates are limited to the basin outline, and
+    # that we have nodata values outside. Therefore we don't need rasterstats to
+    # check the overlay with the shapefile, and we can just read the values directly
+    # rasterstats is simply easier in most other cases, but doesn't have a harmonic 
+    # mean.
+    sub_folder = 'conductivity'
+    unit       = 'cm hr^-1'
+    depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm']
+    field  = 'mean' # no uncertainty maps for these
+    stats = ['mean', 'min', 'max', 'std']
+
+    for depth in depths:
+        tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
+        with rasterio.open(tif) as src:
+            data = np.ma.masked_equal(src.read(), src.nodata)
+        
+        l_values.append( data.min() )
+        l_index.append(('Soil', f'{sub_folder}_{depth}_{field}_min',  f'{unit}', 'SOILGRIDS'))
+        l_values.append( data.count() / (1/data).sum() ) # harmonic mean
+        l_index.append(('Soil', f'{sub_folder}_{depth}_{field}_mean',  f'{unit}', 'SOILGRIDS'))
+        l_values.append( data.max() )
+        l_index.append(('Soil', f'{sub_folder}_{depth}_{field}_max',  f'{unit}', 'SOILGRIDS'))
+        l_values.append( data.std() )
+        l_index.append(('Soil', f'{sub_folder}_{depth}_{field}_std',  f'{unit}', 'SOILGRIDS'))
 
     return l_values, l_index
 

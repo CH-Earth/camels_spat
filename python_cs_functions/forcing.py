@@ -2,6 +2,7 @@
 
 import netCDF4 as nc
 import numpy as np
+import time
 
 def calculate_priestley_taylor_pet(jdoy, dayl, srad, tmax, tmin, wtvp, elev, lati):
     
@@ -137,3 +138,67 @@ def remove_vars_from_rdrs_download(input_file,output_file,variables_to_keep,
                 # Copy variable data
                 new_var[:] = variable[:]
     return
+
+def create_rdrs_unit_conversion_dict():
+    
+    # List the variables, their units, and what we want them to be
+    # Precipitation quantity:           RDRS_v2.1_A_PR0_SFC,    [m],        [kg m-2 s-1]
+    # Downward solar flux:              RDRS_v2.1_P_FB_SFC,     [W m-2],    [W m-2]
+    # Surface incoming infrared flux:   RDRS_v2.1_P_FI_SFC,     [W m-2],    [W m-2]
+    # Geopotential height:              RDRS_v2.1_P_GZ_SFC,     [dam],      < leave as is >
+    # Relative humidity:                RDRS_v2.1_P_HR_1.5m,    [1],        [kPa kPa-1]
+    # Specific humidity:                RDRS_v2.1_P_HU_1.5m,    [kg kg-1],  [kg kg-1]
+    # Surface pressure:                 RDRS_v2.1_P_P0_SFC,     [mb],       [Pa]
+    # Air temperature:                  RDRS_v2.1_P_TT_1.5m,    [C],        [K]
+    # Corrected U-component wind:       RDRS_v2.1_P_UUC_10m,    [kts],      [m s-1]
+    # Corrected V-component wind:       RDRS_v2.1_P_VVC_10m,    [kts],      [m s-1]
+    # Wind modulus from UU and VV:      RDRS_v2.1_P_UVC_10m,    [kts],      [m s-1]
+    
+    # Constants
+    is_same           = 1       # No conversion needed
+    rho_water         = 1000    # [kg m-3]
+    seconds_per_hour  = 3600    # [s]
+    celsius_to_kelvin = 273.15  # [degrees]
+    milibar_to_pascal = 100     # [Pa]
+    kts_to_ms         = 0.514   # [kts] * 0.514 = [m s-1]
+    
+    # Find conversion factors SPECIFIC to RDRSv2.1
+    new_dict = {'RDRS_v2.1_A_PR0_SFC':  rho_water / seconds_per_hour, # [m] * [kg m-3] / [s] = [kg m-2 s-1]
+                'RDRS_v2.1_P_FB_SFC':   is_same, # [W m-2]
+                'RDRS_v2.1_P_FI_SFC':   is_same, # [W m-2]
+                'RDRS_v2.1_P_GZ_SFC':   is_same, # [dam]
+                'RDRS_v2.1_P_HR_1.5m':  is_same, # No value conversion needed, but units will need to change: [1] to [kPa kPa-1]
+                'RDRS_v2.1_P_HU_1.5m':  is_same, # [kg kg-1]
+                'RDRS_v2.1_P_P0_SFC':   milibar_to_pascal, # [mb] * 100 = [Pa]
+                'RDRS_v2.1_P_TT_1.5m':  celsius_to_kelvin, # [C] + 273.15 = [K]
+                'RDRS_v2.1_P_UUC_10m':  kts_to_ms, # [kts] * 0.514 = [m s-1]
+                'RDRS_v2.1_P_VVC_10m':  kts_to_ms, # [kts] * 0.514 = [m s-1]
+                'RDRS_v2.1_P_UVC_10m':  kts_to_ms} # [kts] * 0.514 = [m s-1]
+    return new_dict
+
+def convert_rdrs_variables(data_in, rdrs_unit_conversion_dict):
+    data_out = data_in.copy()
+    
+    # Convert values
+    for variable, factor in rdrs_unit_conversion_dict.items():
+        if variable == 'RDRS_v2.1_P_TT_1.5m':
+            data_out[variable].values = data_in[variable].values + factor
+        else:
+            data_out[variable].values = data_in[variable].values * factor
+    
+    # Set the units
+    data_out['RDRS_v2.1_A_PR0_SFC'].attrs['units'] = 'kg m**-2 s**-1'
+    data_out['RDRS_v2.1_P_HR_1.5m'].attrs['units'] = 'kPa kPa**-1'
+    data_out['RDRS_v2.1_P_P0_SFC'].attrs['units']  = 'Pa'
+    data_out['RDRS_v2.1_P_TT_1.5m'].attrs['units'] = 'K'
+    data_out['RDRS_v2.1_P_UUC_10m'].attrs['units'] = 'm s**-1'
+    data_out['RDRS_v2.1_P_VVC_10m'].attrs['units'] = 'm s**-1'
+    data_out['RDRS_v2.1_P_UVC_10m'].attrs['units'] = 'm s**-1'
+    
+    # Update the history
+    now = time.strftime("%c")
+    old_history = data_out.attrs['history']
+    new_history = f'{old_history}. {now}: Converted units.'
+    data_out.attrs['history'] = new_history
+    
+    return data_out
