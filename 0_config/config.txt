@@ -15,6 +15,7 @@
 code_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/   | string  # Root path of processing code
 data_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/         | string  # Root path of data location
 temp_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/temp/    | string  # Path to temporary data folder - good for intermediate storage
+backup_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/backups/     | string  # Path to backup folder
 
 # 1. Python setup
 venv_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/ | string  # Path where the Python virtual environment will be created
