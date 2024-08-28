@@ -2,7 +2,7 @@
 #SBATCH --job-name=units_vars_rdrs
 #SBATCH --exclude=cnicgiwscpu009 # seems broken right now
 #SBATCH --ntasks=1
-#SBATCH --time=48:00:00
+#SBATCH --time=12:00:00
 #SBATCH --mem=8GB
 #SBATCH --mail-user=wouter.knoben@usask.ca
 #SBATCH --mail-type=ALL

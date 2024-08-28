@@ -8,6 +8,7 @@ import netCDF4 as nc4
 import pandas as pd
 import shutil
 import tarfile
+import time
 import xarray as xr
 from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
@@ -108,6 +109,17 @@ for file in all_files:
     with nc4.Dataset(file, 'a') as f:
         time_variable = f.variables['time']
         time_variable[:] = time_variable[:] + offset
+
+        # Track what we did
+        history = f' On {time.ctime(time.time())}: updated time index from UTC to {lst}.'
+        if 'History' in f.ncattrs():
+            current_history = f.getncattr('History')
+            new_history = f'{current_history}{history}'
+            f.setncattr('History', new_history)
+        elif 'history' in f.ncattrs():
+            current_history = f.getncattr('history')
+            new_history = f'{current_history}{history}'
+            f.setncattr('history', new_history)
     
     # Remove the backup
     os.remove(backup_file)

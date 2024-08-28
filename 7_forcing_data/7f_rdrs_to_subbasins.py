@@ -95,7 +95,7 @@ for case, basin_shp, out_dir in zip(['lumped', 'dist'],
 
     # Define the EASYMORE inputs
     esmr,_ = cs.get_easymore_settings('RDRS', case, None, basin_shp, tmp_dir, out_dir,
-                                      in_files=str(raw_fold / 'rdrs_month' / 'RDRS_*.nc'), version=esmr_version)
+                                      in_files=str(raw_fold / 'RDRS_*.nc'), version=esmr_version)
     
     # Set the approximate grid resolution for cases where we only have a single grid cell
     # We'll overestimate this a little, so we don't accidentally cut part of the basin of

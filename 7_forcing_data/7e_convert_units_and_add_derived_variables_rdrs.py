@@ -9,6 +9,11 @@ from pathlib import Path
 sys.path.append(str(Path().absolute().parent))
 import python_cs_functions as cs
 
+# --- Define if we're restarting or not
+make_backup = False
+use_backup = True
+assert make_backup != use_backup, "Cannot make and use backup at the same time."
+
 # --- Config Handling
 # Specify where the config file can be found
 config_file = '../0_config/config.txt'
@@ -38,7 +43,7 @@ debug_message = f'\n!!! CHECK DEBUGGING STATUS: \n- Development ongoing\n'
 
 # Get the array index from the command-line argument
 if len(sys.argv) != 2:
-    print("Usage: python 1e_add_derived_variables.py <array_index>")
+    print("Usage: python 7e_convert_units_and_add_derived_variables_rdrs.py <array_index>")
     sys.exit(1)
 else:
     ix = int(sys.argv[1])
@@ -58,25 +63,48 @@ print('--- Now running basin {}. {}'.format(ix, basin_id))
 # Get forcing destination path
 raw_fold, _, _ = cs.prepare_forcing_outputs(cs_meta, ix, Path(data_path)/cs_basin_folder) # Returns folders only, not file names
 
-# Find the files
-rdrs_files = glob.glob(str(raw_fold / 'rdrs_month' / 'RDRS_*.nc'))
-rdrs_files.sort()
-
-# Loop over the files and create a backup
+# --- Backup creation/restarts
 backup_folder = raw_fold / 'rdrs_backup_before_units_pet'
-backup_folder.mkdir(parents=True, exist_ok=True)
-for rdrs_file in rdrs_files:
-    filename = Path(rdrs_file).name
-    rdrs_file_backup = filename.replace('RDRS_', 'RDRS_beforeUnitsPET_')
-    shutil.copyfile(rdrs_file, backup_folder / rdrs_file_backup)
 
-# Loop over the files and update the units
-for rdrs_file in rdrs_files:
-    filename = Path(rdrs_file).name
-    backup_file = filename.replace('RDRS_', 'RDRS_beforeUnitsPET_')
-    ds = xr.open_dataset(backup_folder/backup_file)
-    ds = cs.convert_rdrs_variables(ds, cs.create_rdrs_unit_conversion_dict())
-    ds.to_netcdf(rdrs_file)
+if make_backup:
+    # NOTE: if we're MAKING backups, we have the source data in a subfolder called 'rdrs_month'.
+    # If we're using the backups, this folder no longer exists
+
+    # Find the files
+    rdrs_files = glob.glob(str(raw_fold / 'rdrs_month' / 'RDRS_*.nc')) 
+    rdrs_files.sort()
+
+    # Loop over the files and create a backup
+    backup_folder.mkdir(parents=True, exist_ok=True)
+    for rdrs_file in rdrs_files:
+        filename = Path(rdrs_file).name
+        rdrs_file_backup = filename.replace('RDRS_', 'RDRS_beforeUnitsPET_')
+        shutil.copyfile(rdrs_file, backup_folder / rdrs_file_backup)
+
+    # Loop over the files and update the units
+    for rdrs_file in rdrs_files:
+        filename = Path(rdrs_file).name
+        backup_file = filename.replace('RDRS_', 'RDRS_beforeUnitsPET_')
+        ds = xr.open_dataset(backup_folder/backup_file)
+        ds = cs.convert_rdrs_variables(ds, cs.create_rdrs_unit_conversion_dict())
+        ds.to_netcdf(rdrs_file)
+
+if use_backup:
+    # Get the backed up files
+    backup_files = glob.glob(str(raw_fold / backup_folder / 'RDRS_*.nc'))
+    backup_files.sort()
+
+    # Loop over the files and update the units
+    for backup_file in backup_files:
+        ds = xr.open_dataset(backup_file)
+        ds = cs.convert_rdrs_variables(ds, cs.create_rdrs_unit_conversion_dict())
+        filename = Path(backup_file).name
+        new_file = filename.replace('RDRS_beforeUnitsPET_','RDRS_')
+        ds.to_netcdf(raw_fold/new_file)
+
+    # Ensure we have the main files for use in the next bit
+    rdrs_files = glob.glob(str(raw_fold / 'RDRS_*.nc'))
+    rdrs_files.sort()
 
 # Loop over the files and add the vapor pressure and pet variables
 for rdrs_file in rdrs_files:
@@ -96,7 +124,7 @@ for rdrs_file in rdrs_files:
                                             wind_speed='RDRS_v2.1_P_UVC_10m',
                                             wind_height=10,
                                             ground_heat=0,
-                                            new_name='PET',
+                                            new_name='pet',
                                             to_kg_m2_s=True)
 
 # --- Functions
