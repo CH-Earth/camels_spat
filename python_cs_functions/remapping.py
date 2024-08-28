@@ -130,7 +130,7 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
                           'RDRS_v2.1_P_UVC_10m', # wind modulus
                           'RDRS_v2.1_P_VVC_10m', # wind in Y dir
                           'e', # derived vapor pressure
-                          'PET' # derived potential evapotranspiration
+                          'pet' # derived potential evapotranspiration
                           ]
         esmr.var_lon = 'lon'
         esmr.var_lat = 'lat'

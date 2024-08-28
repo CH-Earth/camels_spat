@@ -1161,7 +1161,8 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
             # Do the actual stuff
             flows.sort()
             flows = np.log(flows)
-            slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+            #slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+            slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66 - .33)
             slopes.append(slope)
     slopes = np.array(slopes)
     slope_m = np.nanmean(slopes)

@@ -1454,7 +1454,7 @@ def derive_penman_monteith_pet(file, air_pressure='RDRS_v2.1_P_P0_SFC',
     # 3. Define the other inputs
     unit_new = 'mm hr**-1'
     long_name = 'Potential evapotranspiration calculated with the Penman-Monteith method'
-    new_history = f' On {time.ctime(time.time())}: Derived PET using Penman-Monteith method.'
+    new_history = f' On {time.ctime(time.time())}: derive_penman_monteith_pet().'
     
     # 4. Create the new variable
     file = cs.make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
@@ -1464,7 +1464,7 @@ def derive_penman_monteith_pet(file, air_pressure='RDRS_v2.1_P_P0_SFC',
 def compute_wind_direction(u,v):
     return (180 + 180/np.pi*np.arctan2(u,v)) % 360
 
-def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=False, dims='lat/lon'):
+def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=False, dims='lat/lon', overwrite=False):
 
     '''Adds wind direction to a netCDF4 file that cantains u and v wind components'''
 
@@ -1481,11 +1481,6 @@ def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=Fal
             assert new_value == phi_test, f'result {new_value} does not match known result {phi_test}, for u = {u_test}, v = {v_test}'
         print('-- derive_wind_direction() test completed successfully')
 
-    # 0. Check if the variable already exists
-    if new_name in file.variables:
-        print(f'!!! Warning: derive_wind_direction(): variable {new_name} already exists in file. Exiting.')
-        return file
-
     # 1. Get the values of this variable from the source (this automatically applies scaling and offset)
     u = file.variables[u_wind][:]
     v = file.variables[v_wind][:]
@@ -1498,14 +1493,26 @@ def derive_wind_direction(file, u_wind='u', v_wind='v', new_name='phi', test=Fal
     long_name = 'Meteorological wind direction computed from U and V wind components, indicating angle where wind is coming from with North at 0 degrees and increasing clock-wise '
     new_history = f' On {time.ctime(time.time())}: derive_wind_direction().'
 
-    # 4. Make the variable
+    # 4. Make/update the variable
     # By default, cs.make_nc_variable() uses dimensions (time,latitude,longitude)
     #   because we have only used this for gridded netcdf files before.
     #   This wind direction derivation is performed after netcdf regridding to
     #   polygons, meaning we now have to deal with the original gridded (time,lat,lon)
     #   dimensions, but also with the lumped and distributed cases where dimensions
     #   are (time,hru)
-    file = cs.make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
+
+    # 4.1 Check if the variable already exists
+    if new_name in file.variables:
+        if not overwrite:
+            print(f'!!! Warning: derive_wind_direction(): variable {new_name} already exists in file. Exiting.')
+            return file
+        else:
+            # Overwrite the values in the variable with new ones
+            print(f'Overwrite: derive_wind_direction(): variable {new_name} already exists in file but overwrite = True. Updating values.')
+            file.variables[new_name][:] = values_new
+    # 4.2 If variable doesn't exist, create it
+    else:
+        file = cs.make_nc_variable(file, new_name, unit_new, values_new, long_name=long_name, history=new_history, dims=dims)
 
     return file
 
