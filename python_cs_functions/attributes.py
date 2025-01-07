@@ -67,7 +67,7 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
 
     return l_values, l_index
 
-def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
+def attributes_from_glhymps(geo_folder, dataset, l_values, l_index, equal_area_crs='ESRI:102008'):
 
     '''Calculates attributes from GLHYMPS'''
 
@@ -82,24 +82,41 @@ def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
                              'Permeabi_1': 'logK_Ice', 'Permeabi_2': 'logK_std'}, inplace=True)
         geol.to_file(geol_str)
 
+    # Ensure we have the correct areas to work with
+    if 'New_area_m2' not in geol.columns:
+        geol['New_area_m2'] = geo.to_crs(equal_area_crs).area
+        geol.to_file(geol_str)
+
+    # Create areal averages and standard deviations
+    # Stdev source: https://stats.stackexchange.com/a/6536
+    porosity_mean = (geol['porosity']*geol['New_area_m2']).sum()/geol['New_area_m2'].sum()
+    num_obs_coef = ((geol['New_area_m2'] > 0).sum()-1)/(geol['New_area_m2'] > 0).sum()
+    porosity_std = np.sqrt((geol['New_area_m2'] * (geol['porosity']-porosity_mean)**2).sum() / geol['New_area_m2'].sum())
+    
     # Porosity
     l_values.append( geol['porosity'].min() )
     l_index.append(('Geology', 'porosity_min',  '-', 'GLHYMPS'))
-    l_values.append( geol['porosity'].mean() )
+    l_values.append( porosity_mean ) # areal average
     l_index.append(('Geology', 'porosity_mean',  '-', 'GLHYMPS'))
     l_values.append( geol['porosity'].max() )
     l_index.append(('Geology', 'porosity_max',  '-', 'GLHYMPS'))
-    l_values.append( geol['porosity'].std() )
+    l_values.append( porosity_std )
     l_index.append(('Geology', 'porosity_std',  '-', 'GLHYMPS'))
 
+    # Create areal averages and standard deviations
+    # Stdev source: https://stats.stackexchange.com/a/6536
+    permeability_mean = (geol['logK_Ice']*geol['New_area_m2']).sum()/geol['New_area_m2'].sum()
+    num_obs_coef = ((geol['New_area_m2'] > 0).sum()-1)/(geol['New_area_m2'] > 0).sum()
+    permeability_std = np.sqrt((geol['New_area_m2'] * (geol['logK_Ice']-permeability_mean)**2).sum() / geol['New_area_m2'].sum())
+    
     # Permeability
     l_values.append( geol['logK_Ice'].min() )
     l_index.append(('Geology', 'log_permeability_min',  'm^2', 'GLHYMPS'))
-    l_values.append( geol['logK_Ice'].mean() )
+    l_values.append( permeability_mean )
     l_index.append(('Geology', 'log_permeability_mean',  'm^2', 'GLHYMPS'))
     l_values.append( geol['logK_Ice'].max() )
     l_index.append(('Geology', 'log_permeability_max',  'm^2', 'GLHYMPS'))
-    l_values.append( geol['logK_Ice'].std() )
+    l_values.append( permeability_std )
     l_index.append(('Geology', 'log_permeability_std',  'm^2', 'GLHYMPS'))
     
     return l_values, l_index
