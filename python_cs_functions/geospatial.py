@@ -1452,7 +1452,10 @@ def derive_penman_monteith_pet(file, air_pressure='RDRS_v2.1_P_P0_SFC',
                                                to_kg_m2_s=to_kg_m2_s)
     
     # 3. Define the other inputs
-    unit_new = 'mm hr**-1'
+    if to_kg_m2_s:
+        unit_new = 'kg m**-2 s**-1'
+    else:
+        unit_new = 'mm hr**-1'
     long_name = 'Potential evapotranspiration calculated with the Penman-Monteith method'
     new_history = f' On {time.ctime(time.time())}: derive_penman_monteith_pet().'
     
