@@ -66,6 +66,8 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
         esmr = easymore.easymore()
     elif version == '2.0.0':
         esmr = easymore.Easymore()
+    else:
+        print(f"Code for EASYMORE version{version} not implemented.")
 
     # General settings
     esmr.author_name = 'CAMELS-spat workflow'
@@ -335,12 +337,12 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
         else:    
             return new_ds
 
-def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles):
+def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, esmr_version='1.0'):
 
     ''' Container for repeated tasks needed to run EASYMORE for ERA5 or EM-Earth inputs'''
 
     # Initiate EASYMORE object
-    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder)
+    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder, version=esmr_version)
 
     # Create the remap file
     run_easymore_to_make_remap_file([infiles[0]], [esmr])
@@ -355,12 +357,12 @@ def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, in
 
     return esmr # EASYMORE object, containing all info used during run
 
-def easymore_workflow_with_cell_padding(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, grid_spacing=0.25):
+def easymore_workflow_with_cell_padding(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, grid_spacing=0.25, esmr_version='1.0'):
 
     '''Container to add a step to easymore_workflow() where we apply padding to input netCDF file(s)'''
     
     # Initiate EASYMORE object
-    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder)
+    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder, version=esmr_version)
 
     # Loop over the files and process
     for ix, file_nc in enumerate(infiles):
