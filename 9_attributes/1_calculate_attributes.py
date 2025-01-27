@@ -62,7 +62,7 @@ if (row['Station_id'] == cs_unusable['Station_id']).any():
         
 # --- Processing
 # Names of the data folders with catchment maps
-data_subfolders = ['era5', 'worldclim', 'hydrology', 'lai', 'forest_height', 
+data_subfolders = ['rdrs', 'worldclim', 'hydrology', 'lai', 'forest_height', 
                    'glclu2019', 'modis_land', 'lgrip30', 'merit', 'hydrolakes', 
                    'pelletier', 'soilgrids', 'glhymps'] # 
 
@@ -101,7 +101,9 @@ for dataset in data_subfolders:
     
     ## CLIMATE
     if dataset == 'era5':
-        l_values, l_index, ds_precip, ds_era5 = csa.attributes_from_era5(met_folder, shp, 'era5', l_values, l_index)                                
+        l_values, l_index, ds_precip, ds_era5 = csa.attributes_from_era5(met_folder, shp, 'era5', l_values, l_index)
+    if dataset == 'rdrs':
+        l_values, l_index, ds_precip, ds_rdrs = csa.attributes_from_rdrs(met_folder, shp, dataset, l_values, l_index)
     if dataset == 'worldclim':
         csa.oudin_pet_from_worldclim(geo_folder, dataset) # Get an extra PET estimate to sanity check ERA5 outcomes
         csa.aridity_and_fraction_snow_from_worldclim(geo_folder, dataset) # Get monthly aridity and fraction snow maps

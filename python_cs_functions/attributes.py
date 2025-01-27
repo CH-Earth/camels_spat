@@ -84,7 +84,7 @@ def attributes_from_glhymps(geo_folder, dataset, l_values, l_index, equal_area_c
 
     # Ensure we have the correct areas to work with
     if 'New_area_m2' not in geol.columns:
-        geol['New_area_m2'] = geo.to_crs(equal_area_crs).area
+        geol['New_area_m2'] = geol.to_crs(equal_area_crs).area
         geol.to_file(geol_str)
 
     # Create areal averages and standard deviations
@@ -189,15 +189,22 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     
     # Convert precipitation into mm d-1
     pre = (pre * seconds_per_hour).resample(time='1D').sum() / water_density * mm_per_m # ([kg m-2 s-1] * [s hr-1]).resample(time='1D').sum() / [kg m-3] * [mm m-1] = [mm d-1]
+    pre = subset_dataset_to_max_full_years(pre, res='day', water_year=True)
     
-    # Match times between hydrologic data and precipitation
-    pre = pre.sel(time=slice(hyd['time'][0].values, hyd['time'][-1].values))
-    assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
-    assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
-    
+    # 2025-01-26 
+    # We need to disable these checks because we're now mainly using RDRS for forcing, and RDRS has a more limited time span than ERA5 does
+    # As a result, if we match the hydrologic data to the RDRS period we'll lose a lot of data for stations with obs starting before 1980
+    # We now thus subset the hydrologic data only inside the calculate_signatures() function, for the two signatures that use precip data
+    # Keeping the code below for posterity
+    #
+    ## Match times between hydrologic data and precipitation
+    #pre = pre.sel(time=slice(hyd['time'][0].values, hyd['time'][-1].values))
+    #assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
+    #assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    #
     # Gap-fill the streamflow series if needed, so that we have identical length time series to work with
-    hyd = hyd.resample(time='D').asfreq()
-    assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
+    #hyd = hyd.resample(time='D').asfreq()
+    #assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
 
     # Create a water-year time variable
     hyd['water_year'] = hyd['time'].dt.year.where(hyd['time'].dt.month < 10, hyd['time'].dt.year + 1)
@@ -315,6 +322,257 @@ def attributes_from_glclu2019(geo_folder, dataset, shp_str, l_values, l_index):
     check_scale_and_offset(tif)
     l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'GLCLU 2019', prefix='lc1_')
     return l_values, l_index
+
+
+def attributes_from_rdrs(met_folder, shp_path, dataset, l_values, l_index, use_mfdataset=False):
+
+    '''Calculates a variety of metrics from RDRS data'''
+
+    # Define various conversion constants
+    water_density = 1000 # kg m-3
+    mm_per_m = 1000 # mm m-1
+    seconds_per_hour = 60*60 # s h-1
+    seconds_per_day = seconds_per_hour*24 # s d-1
+    days_per_month = np.array([31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]).reshape(-1, 1) # d month-1
+    days_per_year = days_per_month.sum()
+    flip_sign = -1 # -; used to convert PET from negative (by convention this indicates an upward flux) to positive
+    kelvin_to_celsius = -273.15
+    pa_per_kpa = 1000 # Pa kPa-1
+
+    # Define file locations, depending on if we are dealing with lumped or distributed cases
+    if 'lumped' in shp_path:
+        rdrs_folder = met_folder / 'lumped'
+    elif 'distributed' in shp_path:
+        rdrs_folder = met_folder / 'distributed'
+    rdrs_files = sorted( glob.glob( str(rdrs_folder / 'RDRS_*.nc') ) )
+
+    # Open the data
+    if use_mfdataset:
+        ds = xr.open_mfdataset(rdrs_files, engine='netcdf4')
+        ds = ds.load() # load the whole thing into memory instead of lazy-loading
+    else:
+        ds = xr.merge([xr.open_dataset(f) for f in rdrs_files])
+        ds = ds.load()
+
+    # -- Get the precipitation for hydrologic signature calculations
+    # This avoids having to reload the entire dataset another time
+    ds_precip = ds['RDRS_v2.1_A_PR0_SFC'].copy()
+
+    # Select whole years only
+    #   This avoids issues in cases where we have incomplete whole data years
+    #   (e.g. 2000-06-01 to 2007-12-31) in basins with very seasonal weather
+    #   (e.g. all precip occurs in Jan, Feb, Mar). By using only full years
+    #   we avoid accidentally biasing the attributes.
+    ds = subset_dataset_to_max_full_years(ds)
+    num_years = len(ds.groupby('time.year'))
+    print(l_values)
+    l_values.append(num_years)
+    l_index.append( ('Climate', 'num_years_rdrs', 'years', 'RDRS') )
+
+    # --- Annual statistics (P, PET, T, aridity, seasonality, temperature, snow)
+    # P
+    yearly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_pr0.mean().values)
+    l_index.append(('Climate', 'PR0_SFC_mean', 'mm', 'RDRS'))
+    l_values.append(yearly_pr0.std().values)
+    l_index.append(('Climate', 'PR0_SFC_std', 'mm', 'RDRS'))
+
+    # PET
+    yearly_pet = ds['pet'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_pet.mean().values)
+    l_index.append(('Climate', 'pet_mean', 'mm', 'RDRS'))
+    l_values.append(yearly_pet.std().values)
+    l_index.append(('Climate', 'pet_std', 'mm', 'RDRS'))
+
+    # T
+    yearly_tt = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1Y').mean() + kelvin_to_celsius # K > C
+    l_values.append(yearly_tt.mean().values)
+    l_index.append(('Climate', 'TT_mean', 'C', 'RDRS'))
+    l_values.append(yearly_tt.std().values)
+    l_index.append(('Climate', 'TT_std', 'C', 'RDRS'))
+
+    # Aridity
+    yearly_ari  = yearly_pet / yearly_pr0
+    l_values.append(yearly_ari.mean().values)
+    l_index.append(('Climate', 'aridity1_mean', '-', 'RDRS'))
+    l_values.append(yearly_ari.std().values)
+    l_index.append(('Climate', 'aridity1_std', '-', 'RDRS'))
+
+    # Snow
+    ds['snow'] = xr.where(ds['RDRS_v2.1_P_TT_1.5m'] < 273.15, ds['RDRS_v2.1_A_PR0_SFC'],0)
+    yearly_snow = ds['snow'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density
+    yearly_fs = yearly_snow / yearly_pr0
+    l_values.append(yearly_fs.mean().values)
+    l_index.append(('Climate', 'fracsnow1_mean', '-', 'RDRS'))
+    l_values.append(yearly_fs.std().values)
+    l_index.append(('Climate', 'fracsnow1_std', '-', 'RDRS'))
+
+    # Seasonality
+    seasonality = find_climate_seasonality_rdrs(ds,use_typical_cycle=False)
+    l_values.append(seasonality.mean())
+    l_index.append(('Climate', 'seasonality1_mean', '-', 'RDRS'))
+    l_values.append(seasonality.std())
+    l_index.append(('Climate', 'seasonality1_std', '-', 'RDRS'))
+
+    # --- Monthly attributes
+    # Calculate monthly PET in mm
+    #      kg m-2 s-1 / kg m-3
+    # mm month-1 = kg m-2 s-1 * kg-1 m3 * s d-1 * d month-1 * mm m-1 * -
+    monthly_pet = ds['pet'].resample(time='1M').mean().groupby('time.month') 
+    pet_m = monthly_pet.mean() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    pet_s = monthly_pet.std() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    l_values, l_index = process_monthly_means_to_lists(pet_m, 'mean', l_values, l_index, 'pet', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pet_s, 'std', l_values, l_index, 'pet', 'mm', source='RDRS')
+
+    # Same for precipitation: [mm month-1]
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean().groupby('time.month')
+    pr0_m = monthly_pr0.mean() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    pr0_s = monthly_pr0.std() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    l_values, l_index = process_monthly_means_to_lists(pr0_m, 'mean', l_values, l_index, 'RDRS_v2.1_A_PR0_SFC', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pr0_s, 'std', l_values, l_index, 'RDRS_v2.1_A_PR0_SFC', 'mm', source='RDRS')
+
+    # Monthly temperature statistics [C]
+    monthly_tavg = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tavg_m = monthly_tavg.mean()
+    tavg_s = monthly_tavg.std()
+    l_values, l_index = process_monthly_means_to_lists(tavg_m, 'mean', l_values, l_index, 'tdavg', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tavg_s, 'std', l_values, l_index, 'tdavg', 'C', source = 'RDRS')
+
+    monthly_tmin = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').min().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tmin_m = monthly_tmin.mean()
+    tmin_s = monthly_tmin.std()
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'mean', l_values, l_index, 'tdmin', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'std', l_values, l_index, 'tdmin', 'C', source = 'RDRS')
+    
+    monthly_tmax = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').max().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tmax_m = monthly_tmax.mean()
+    tmax_s = monthly_tmax.std()
+    l_values, l_index = process_monthly_means_to_lists(tmax_m, 'mean', l_values, l_index, 'tdmax', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tmax_s, 'std', l_values, l_index, 'tdmax', 'C', source = 'RDRS')
+
+    # Monthly shortwave and longwave [W m-2]
+    monthly_sw = ds['RDRS_v2.1_P_FB_SFC'].resample(time='1M').mean().groupby('time.month')
+    sw_m = monthly_sw.mean()
+    sw_s = monthly_sw.std()
+    l_values, l_index = process_monthly_means_to_lists(sw_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_FB_SFC', 'W m^-2', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(sw_s, 'std', l_values, l_index, 'RDRS_v2.1_P_FB_SFC', 'W m^-2', source = 'RDRS')
+    
+    monthly_lw = ds['RDRS_v2.1_P_FI_SFC'].resample(time='1M').mean().groupby('time.month')
+    lw_m = monthly_lw.mean(dim='time')
+    lw_s = monthly_lw.std(dim='time')
+    l_values, l_index = process_monthly_means_to_lists(lw_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_FI_SFC', 'W m^-2', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(lw_s, 'std', l_values, l_index, 'RDRS_v2.1_P_FI_SFC', 'W m^-2', source = 'RDRS')
+
+    # Surface pressure [Pa]
+    monthly_sp = ds['RDRS_v2.1_P_P0_SFC'].resample(time='1M').mean().groupby('time.month')
+    sp_m = monthly_sp.mean() / pa_per_kpa # [Pa] > [kPa]
+    sp_s = monthly_sp.std() / pa_per_kpa
+    l_values, l_index = process_monthly_means_to_lists(sp_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_P0_SFC', 'kPa', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(sp_s, 'std', l_values, l_index, 'RDRS_v2.1_P_P0_SFC', 'kPa', source = 'RDRS')
+
+    # Humidity [-]
+    monthly_q = ds['RDRS_v2.1_P_HU_1.5m'].resample(time='1M').mean().groupby('time.month') # specific
+    q_m = monthly_q.mean()
+    q_s = monthly_q.std()
+    l_values, l_index = process_monthly_means_to_lists(q_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_HU_1.5m', 'kg kg^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(q_s, 'std', l_values, l_index, 'RDRS_v2.1_P_HU_1.5m', 'kg kg^-1', source = 'RDRS')
+    
+    monthly_rh = ds['RDRS_v2.1_P_HR_1.5m'].resample(time='1M').mean().groupby('time.month') # relative
+    rh_m = monthly_rh.mean()
+    rh_s = monthly_rh.std()
+    l_values, l_index = process_monthly_means_to_lists(rh_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_HR_1.5m', 'kPa kPa^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(rh_s, 'std', l_values, l_index, 'RDRS_v2.1_P_HR_1.5m', 'kPa kPa^-1', source = 'RDRS')
+
+    # Wind speed [m s-1]
+    monthly_w = ds['RDRS_v2.1_P_UVC_10m'].resample(time='1M').mean().groupby('time.month')
+    w_m = monthly_w.mean()
+    w_s = monthly_w.std()
+    l_values, l_index = process_monthly_means_to_lists(w_m, 'mean', l_values, l_index, 'RDRS_v2.1_P_UVC_10m', 'm s^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(w_s, 'std', l_values, l_index, 'RDRS_v2.1_P_UVC_10m', 'm s^-1', source = 'RDRS')
+
+    # Wind direction
+    monthly_phi = ds['phi'].resample(time='1M').apply(circmean_group).groupby('time.month')
+    phi_m = monthly_phi.apply(circmean_group)
+    phi_s = monthly_phi.apply(circstd_group)
+    l_values, l_index = process_monthly_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees', source = 'RDRS')
+
+    # aridity
+    monthly_pet = ds['pet'].resample(time='1M').mean()
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean()
+    if (monthly_pr0 == 0).any():
+        print(f'--- WARNING: attributes_from_rdrs(): adding 1 mm to monthly precipitation to avoid divide by zero error in aridity calculation')
+        monthly_pr0[(monthly_pr0 == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_ari = (monthly_pet / monthly_pr0).groupby('time.month')
+    ari_m = monthly_ari.mean()
+    ari_s = monthly_ari.std()
+    l_values, l_index = process_monthly_means_to_lists(ari_m, 'mean', l_values, l_index, 'aridity1', '-', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-', source = 'RDRS')
+
+    # snow
+    monthly_snow = ds['snow'].resample(time='1M').mean()
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean()
+    if (monthly_pr0 == 0).any():
+        print(f'--- WARNING: attributes_from_rdrs(): adding 1 mm to monthly precipitation to avoid divide by zero error in snow calculation. Note that by definition this cannot change the fraction snow result (if there is 0 precip, none of it will fall as snow)')
+        monthly_pr0[(monthly_pr0 == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_snow = (monthly_snow / monthly_pr0).groupby('time.month')
+    fsnow_m = monthly_snow.mean()
+    fsnow_s = monthly_snow.std()
+    l_values, l_index = process_monthly_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-', source = 'RDRS') 
+
+    # --- High-frequency statistics (high/low duration/timing/magnitude)
+    #  Everyone does precip. We'll add temperature too as a drought/frost indicator
+    
+    # -- LOW TEMPERATURE
+    variable  = 'RDRS_v2.1_P_TT_1.5m'
+    low_threshold = 273.15 # K, freezing point
+    low_condition = ds[variable] < low_threshold
+    l_values,l_index = calculate_temp_prcp_stats('temp',low_condition,'low',l_values,l_index, dataset='RDRS')
+
+    # -- HIGH TEMPERATURE
+    # WMO defines a heat wave as a 5-day or longer period with maximum daily temperatures 5C above 
+    # "standard" daily max temperature (1961-1990; source:
+    # https://www.ifrc.org/sites/default/files/2021-06/10-HEAT-WAVE-HR.pdf).
+    # We define a "hot day" therefore as a day with a maximum temperature 5 degrees over the 
+    # the long-term mean maximum temperature.
+    #   Note: we don't have 1961-1990 data for some stations, so we stick with long-term mean.
+    #   Note: this will in most cases slightly underestimate heat waves compared to WMO definition
+    
+    # First, we identify the long-term mean daily maximum temperature in a dedicated function
+    var = 'RDRS_v2.1_P_TT_1.5m'
+    high_threshold = create_mean_daily_max_series(ds,var=var)
+    
+    # Next, we check if which 't' values are 5 degrees above the long-term mean daily max 
+    #  ("(ds['t'] > result_array + 5)"), and resample this to a daily time series 
+    #  ("resample(time='1D')") filled with "True" if any value in that day was True.
+    daily_flags = (ds[var] > high_threshold + 5).resample(time='1D').any()
+    
+    # Finally, we reindex these daily flags back onto the hourly time series by filling values
+    high_condition = daily_flags.reindex_like(ds[var], method='ffill')
+    
+    # Now calculate stats like before
+    l_values,l_index = calculate_temp_prcp_stats('temp',high_condition,'high',l_values,l_index, dataset='RDRS')
+
+    # -- LOW PRECIPITATION
+    variable = 'RDRS_v2.1_A_PR0_SFC'
+    # We'll stick with the original CAMELS definition of low precipitation: < 1 mm day-1
+    # It may not make too much sense to look at "dry hours" so we'll do this analysis at daily step
+    low_threshold = 1 # [mm d-1]
+    # Create daily precipitation sum (divided by density, times mm m-1 cancels out)
+    # [kg m-2 s-1] * [s h-1] / [kg m-3] * [mm m-1] = [mm h-1]
+    low_condition = (ds[variable] * seconds_per_hour).resample(time='1D').sum() < low_threshold
+    l_values,l_index = calculate_temp_prcp_stats('prec',low_condition,'low',l_values,l_index,
+                                             units='days', dataset='RDRS') # this 'units' argument prevents conversion to days inside the functiom
+    
+    # -- HIGH PRECIPITATION
+    # CAMELS: > 5 times mean daily precip
+    high_threshold = 5 * (ds[variable] * seconds_per_hour).resample(time='1D').sum().mean()
+    high_condition = (ds[variable] * seconds_per_hour).resample(time='1D').sum() >= high_threshold
+    l_values,l_index = calculate_temp_prcp_stats('prec',high_condition,'high',l_values,l_index,
+                                                 units='days', dataset='RDRS')
+
+    return l_values, l_index, ds_precip, ds
 
 
 def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_mfdataset=False):
@@ -1125,6 +1383,12 @@ def calculate_flow_period_stats(var, condition, hilo, l_values, l_index,
 
 def calculate_signatures(hyd, pre, source, l_values, l_index):
     '''Calculates various signatures'''
+
+    ## prep for signatures that require precip
+    hyd_ss = hyd.sel(time=slice(pre['time'][0].values, pre['time'][-1].values)) # subset streamflow to precip record length
+    assert hyd_ss['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp' # confirm time periods are the same
+    assert hyd_ss['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    assert all(hyd_ss['water_year'] == pre['water_year'])
     
     ## LONG-TERM STATISTICS
     # Mean daily discharge
@@ -1137,7 +1401,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'daily_discharge_std', 'mm d^-1', f'{source}') )
     
     # Mean monthly flows
-    monthly_q = hyd['q_obs'].resample(time='1ME').mean().groupby('time.month')
+    monthly_q = hyd['q_obs'].resample(time='1M').mean().groupby('time.month')
     monthly_m = monthly_q.mean()
     with warnings.catch_warnings():
         # This mutes a "RuntimeWarning: Degrees of freedom <= 0 for slice. 
@@ -1147,22 +1411,23 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
         monthly_s = monthly_q.std()
     l_values, l_index = process_monthly_means_to_lists(monthly_m, 'mean', l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
     l_values, l_index = process_monthly_means_to_lists(monthly_s, 'std',  l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
-    
+
     # Runoff ratio
-    daily_mean_p = pre.groupby(hyd['water_year']).mean()
-    yearly_rr = daily_mean_q/daily_mean_p
+    daily_mean_p = pre.groupby('water_year').mean()
+    daily_mean_q_ss = hyd_ss['q_obs'].groupby(hyd_ss['water_year']).mean()
+    yearly_rr = daily_mean_q_ss/daily_mean_p
     rr_m = yearly_rr.mean()
     rr_s = yearly_rr.std()
     l_values.append(float(rr_m.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, ERA5') )
+    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, RDRS') )
     l_values.append(float(rr_s.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, ERA5') )
+    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, RDRS') )
     
     # Streamflow elasticity
-    q_elas = np.nanmedian(((daily_mean_q - daily_mean_q.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q.mean()))
+    q_elas = np.nanmedian(((daily_mean_q_ss - daily_mean_q_ss.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q_ss.mean()))
     l_values.append(q_elas)
-    l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, ERA5') )
-    
+    l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, RDRS') )
+
     # Slope of FDC
     groups = hyd['q_obs'].groupby(hyd['water_year'])
     slopes = []
@@ -1193,8 +1458,8 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     # Baseflow index
     nan_mask = np.isnan(hyd['q_obs'])
     q_filled = hyd['q_obs'].interpolate_na(dim='time', method='linear')
-    rec,_ = baseflow.separation(q_filled.values, method='Eckhardt') # Find baseflow with Eckhardt filter
-    tmp = xr.DataArray(rec['Eckhardt'], dims='time', coords={'time': hyd['time']}) # Prepare a new variable to put in 'hyd'
+    rec = baseflow.separation(q_filled.to_dataframe(), method='Eckhardt') # Find baseflow with Eckhardt filter
+    tmp = xr.DataArray(rec['Eckhardt']['q_obs'])
     tmp[nan_mask] = np.nan
     hyd['q_bas'] = tmp
     daily_mean_qbase = hyd['q_bas'].groupby(hyd['water_year']).mean()
@@ -1206,17 +1471,19 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'bfi_std', '-', f'{source}') )
     
     # Half-flow date
-    tmp_cum_flow = hyd['q_obs'].groupby(hyd['water_year']).cumsum() # Cumulative flow per water year
-    tmp_sum_flow = hyd['q_obs'].groupby(hyd['water_year']).sum() # Total flow per water year
-    tmp_frc_flow = tmp_cum_flow.groupby(hyd['water_year']) / tmp_sum_flow # Fractional flow per water year
-    groups = tmp_frc_flow.groupby(hyd['water_year'])
     dates = []
-    for year,group in groups:
+    for year, group in hyd['q_obs'].groupby(hyd['water_year']):
+        # Calculate the values for this year
+        tmp_cum_flow = group.cumsum() # Cumulative flow per water year
+        tmp_sum_flow = group.sum() # Total flow per water year
+        tmp_frc_flow = tmp_cum_flow / tmp_sum_flow # Fractional flow per water year   
+        # Deal with NaNs
         if np.isnan(group).all(): # happens in a few basins with year-long+ periods of zero flow
             dates.append(np.nan)
         else:
-            hdf = group[group > 0.5][0]['time'].values
+            hdf = group[tmp_frc_flow > 0.5][0]['time'].values
             dates.append(pd.Timestamp(hdf).dayofyear)
+    
     dates = np.array(dates)
     dates = dates[~np.isnan(dates)] # Remove NaNs so we can use the circ stats
     hdf_m = circmean(dates, high=366)
@@ -1364,12 +1631,12 @@ def get_river_attributes(riv_str, l_values, l_index, area):
             for COMID in headwaters.index:
                 stream_length = 0
                 while COMID in river.index:
-                    stream_length += river.loc[COMID]['lengthkm'] # Add the length of the current segment
+                    stream_length += river.loc[COMID]['new_len_km'] # Add the length of the current segment
                     COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
                 stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
         
             # Stats
-            stream_total = river['lengthkm'].sum()
+            stream_total = river['new_len_km'].sum()
             stream_lengths = np.array(stream_lengths)
             min_length = stream_lengths.min()
             mean_length = stream_lengths.mean()
@@ -1402,6 +1669,35 @@ def get_river_attributes(riv_str, l_values, l_index, area):
     l_index.append(('Topography', 'elongation_ratio','-', 'MERIT Hydro, MERIT Hydro Basins'))
     
     return l_values,l_index
+
+## ---- RDRS
+def find_climate_seasonality_rdrs(ds, use_typical_cycle=False):
+
+    if not use_typical_cycle:
+        # Resample the observations to daily, retain individual years
+        daily_p_groups = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1D').mean().groupby('time.year')
+        daily_t_groups = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().groupby('time.year')
+
+        seasonalities = []
+        for zip_p, zip_t in zip(daily_p_groups,daily_t_groups):
+            year = zip_p[0]
+            yp = zip_p[1].values.flatten()
+            yt = zip_t[1].values.flatten()
+            seasonalities.append(fit_climate_sines(yt,yp))
+        return np.array(seasonalities)
+    
+    else:
+        # Resample to typical seasonal cycles at daily resolution
+        daily_p = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+        daily_t = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+
+        # Time series of input and output
+        yp = daily_p.values.flatten()
+        yt = daily_t.values.flatten()
+
+        # Fit the sine curves and return the seasonality coefficient
+        return fit_climate_sines(yt,yp)
+
 
 
 ## ---- ERA5
