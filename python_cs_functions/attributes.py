@@ -203,7 +203,7 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     #assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
     #
     # Gap-fill the streamflow series if needed, so that we have identical length time series to work with
-    #hyd = hyd.resample(time='D').asfreq()
+    hyd = hyd.resample(time='D').asfreq()
     #assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
 
     # Create a water-year time variable
@@ -1125,6 +1125,10 @@ def update_values_list(l_values, stats, zonal_out, scale, offset):
     if scale is None: scale = 1 # If scale is undefined that means we simply multiply by 1
     if offset is None: offset = 0 # Undefined offset > add 0
 
+    # Deal with the occassional None that we get when raster data input to zonal-stats is missing
+    # This fixes 9 occurrences of missing data in the soilgrids maps
+    zonal_out = zonal_out_none2nan(zonal_out)
+
     # We loop through the calculated stats in a pre-determined order:
     # 1. min
     # 2. mean
@@ -1137,6 +1141,15 @@ def update_values_list(l_values, stats, zonal_out, scale, offset):
     if 'std' in stats:  l_values.append(zonal_out[0]['std']  * scale + offset)
 
     return l_values
+
+def zonal_out_none2nan(zonal_out):
+    '''Loops over zonal_out list that contains dictionaries, and replaces any None with np.nan'''
+    for zonal_dict in zonal_out:
+        for key in zonal_dict:
+            if zonal_dict[key] is None:
+                zonal_dict[key] = np.nan
+                print(f'Replaced None in {key} with NaN')
+    return zonal_out  
 
 def read_scale_and_offset(geotiff_path):
     # Enforce data type
@@ -1385,12 +1398,19 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     '''Calculates various signatures'''
 
     ## prep for signatures that require precip
-    hyd_ss = hyd.sel(time=slice(pre['time'][0].values, pre['time'][-1].values)) # subset streamflow to precip record length
-    assert hyd_ss['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp' # confirm time periods are the same
-    assert hyd_ss['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
-    assert all(hyd_ss['water_year'] == pre['water_year'])
-    
-    ## LONG-TERM STATISTICS
+    # find the section of 'hyd' and 'pre' with the largest overlap
+    pre_s = pre['time'][0]
+    pre_e = pre['time'][-1]
+    hyd_s = hyd['time'][0]
+    hyd_e = hyd['time'][-1]
+    pre_ss = pre.sel(time=slice(max(pre_s,hyd_s), min(pre_e, hyd_e)))
+    hyd_ss = hyd.sel(time=slice(max(pre_s,hyd_s), min(pre_e, hyd_e))) # subset streamflow to precip record length
+    assert hyd_ss['time'][0].values == pre_ss['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp' # confirm time periods are the same
+    assert hyd_ss['time'][-1].values == pre_ss['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    assert len(hyd_ss['time']) == len(pre_ss['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
+    assert all(hyd_ss['water_year'] == pre_ss['water_year']) 
+
+        ## LONG-TERM STATISTICS
     # Mean daily discharge
     daily_mean_q = hyd['q_obs'].groupby(hyd['water_year']).mean() # .mean() of daily values gives us [mm d-1]
     mean_q_m = daily_mean_q.mean()
@@ -1413,7 +1433,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_values, l_index = process_monthly_means_to_lists(monthly_s, 'std',  l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
 
     # Runoff ratio
-    daily_mean_p = pre.groupby('water_year').mean()
+    daily_mean_p = pre_ss.groupby('water_year').mean()
     daily_mean_q_ss = hyd_ss['q_obs'].groupby(hyd_ss['water_year']).mean()
     yearly_rr = daily_mean_q_ss/daily_mean_p
     rr_m = yearly_rr.mean()
@@ -1478,7 +1498,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
         tmp_sum_flow = group.sum() # Total flow per water year
         tmp_frc_flow = tmp_cum_flow / tmp_sum_flow # Fractional flow per water year   
         # Deal with NaNs
-        if np.isnan(group).all(): # happens in a few basins with year-long+ periods of zero flow
+        if ((group.isnull()) | (group == 0)).all(): # happens in a few basins with year-long+ periods of zero flow, and isnull() accounts for missing values in such years
             dates.append(np.nan)
         else:
             hdf = group[tmp_frc_flow > 0.5][0]['time'].values
@@ -1627,7 +1647,7 @@ def get_river_attributes(riv_str, l_values, l_index, area):
         if len(river) > 0:
             # Raw data
             stream_lengths = []
-            headwaters = river[river['maxup'] == 0] # identify reaches with no upstream
+            headwaters = river[(river['maxup'] == 0) | (river['maxup'].isna())] # identify reaches with no upstream
             for COMID in headwaters.index:
                 stream_length = 0
                 while COMID in river.index:
@@ -1901,7 +1921,7 @@ def calculate_monthly_lai_maps(lai_files, des_path):
     return des_files
 
 ## --- WorldClim
-def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
+def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset, overwrite=False):
     
     '''Calculates aridity and fraction snow maps from WorldClim data'''
 
@@ -1922,6 +1942,18 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
     # Loop over files and calculate aridity
     for prc_file, pet_file, tmp_file in zip(prc_files, pet_files, tmp_files):
 
+        # Define output file names
+        ari_name = prc_file.replace('prec','aridity2')
+        ari_file = str(ari_folder / ari_name)
+        fsnow_name = prc_file.replace('prec','fracsnow2')
+        fsnow_file = str(fsnow_folder / fsnow_name)
+        snow_name = prc_file.replace('prec','snow2')
+        snow_file = str(snow_folder / snow_name)
+
+        # Check if we proceed
+        if os.path.isfile(ari_file) and os.path.isfile(fsnow_file) and os.path.isfile(snow_file) and not overwrite:
+            return # step out early
+
         # Define month
         month = prc_file.split('_')[-1].split('.')[0] # 'wc2.1_30s_prec_01.tif' > '01', ..., '12'
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
@@ -1941,22 +1973,14 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
         ari = pet/prc # [-]
         frac_snow = snow/prc # [-]
 
-        # Define output file name and write to disk
-        ari_name = prc_file.replace('prec','aridity2')
-        ari_file = str(ari_folder / ari_name)
+        # Write to disk
         write_geotif_sameDomain(prc_path, ari_file, ari)
-
-        fsnow_name = prc_file.replace('prec','fracsnow2')
-        fsnow_file = str(fsnow_folder / fsnow_name)
         write_geotif_sameDomain(prc_path, fsnow_file, frac_snow)
-
-        snow_name = prc_file.replace('prec','snow2')
-        snow_file = str(snow_folder / snow_name)
         write_geotif_sameDomain(prc_path, snow_file, snow)
     
     return
 
-def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
+def oudin_pet_from_worldclim(geo_folder, dataset, debug=False, overwrite=False):
 
     '''Calculates PET estimates from WorldClim data, using the Oudin (2005; 10.1016/j.jhydrol.2004.08.026) formulation'''
 
@@ -1978,6 +2002,14 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
     # Loop over files and calculate PET
     for srad_file, tavg_file in zip(srad_files, tavg_files):
 
+        # Define output file name
+        pet_name = srad_file.replace('srad','pet')
+        pet_file = str(pet_folder / pet_name)
+
+        # Check if we proceed
+        if os.path.isfile(pet_file) and not overwrite:
+            return # step out early
+
         # Define month
         month = srad_file.split('_')[-1].split('.')[0] # 'wc2.1_30s_srad_01.tif' > '01', ..., '12'
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
@@ -1993,9 +2025,7 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
         pet_month = pet * days_per_month[month_ix] # mm month-1
         if debug: print(f'Calculating monthly PET for month {month} at day-index {month_ix}')
 
-        # Define output file name and write to disk
-        pet_name = srad_file.replace('srad','pet')
-        pet_file = str(pet_folder / pet_name)
+        # Write to disk
         write_geotif_sameDomain(srad_path, pet_file, pet_month)
     return
 
