@@ -29,7 +29,7 @@ basins_path = Path(data_path) / cs_basin_folder
 
 # Get the attribute folder
 att_folder = cs.read_from_config(config_file, 'att_path')
-att_path = basins_path / att_folder
+att_path = basins_path / att_folder / 'lumped'
 att_path.mkdir(parents=True, exist_ok=True)
 
 # --- Data loading
@@ -103,7 +103,7 @@ for dataset in data_subfolders:
     if dataset == 'era5':
         l_values, l_index, ds_precip, ds_era5 = csa.attributes_from_era5(met_folder, shp, 'era5', l_values, l_index)
     if dataset == 'rdrs':
-        l_values, l_index, ds_precip, ds_rdrs = csa.attributes_from_rdrs(met_folder, shp, dataset, l_values, l_index)
+        l_values, l_index, ds_precip, ds_rdrs = csa.attributes_from_rdrs(met_folder, shp, dataset, l_values, l_index, use_mfdataset=True)
     if dataset == 'worldclim':
         csa.oudin_pet_from_worldclim(geo_folder, dataset) # Get an extra PET estimate to sanity check ERA5 outcomes
         csa.aridity_and_fraction_snow_from_worldclim(geo_folder, dataset) # Get monthly aridity and fraction snow maps
@@ -123,11 +123,11 @@ for dataset in data_subfolders:
     
     ## TOPOGRAPHY
     if dataset == 'merit':
-        l_values, l_index = csa.attributes_from_merit(geo_folder, dataset, shp, riv, row, l_values, l_index)
+        l_values, l_index, _ = csa.attributes_from_merit(geo_folder, dataset, shp, riv, row, l_values, l_index)
     
     ## OPENWATER
     if dataset == 'hydrolakes':
-        l_values, l_index = csa.attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index)
+        l_values, l_index, _ = csa.attributes_from_hydrolakes(geo_folder, dataset, shp, _, l_values, l_index)
     if dataset == 'hydrology':
         l_values, l_index = csa.attributes_from_streamflow(hyd_folder, dataset, basin_id, ds_precip, row, l_values, l_index)
     
@@ -139,7 +139,7 @@ for dataset in data_subfolders:
     
     ## GEOLOGY
     if dataset == 'glhymps':
-        l_values, l_index = csa.attributes_from_glhymps(geo_folder, dataset, l_values, l_index)
+        l_values, l_index, _ = csa.attributes_from_glhymps(geo_folder, dataset, shp, l_values, l_index)
 
 # Remove the temporary folder
 shutil.rmtree(temp_path)

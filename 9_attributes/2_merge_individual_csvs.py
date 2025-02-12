@@ -19,7 +19,7 @@ basins_path = Path(data_path) / cs_basin_folder
 
 # Get the attribute folder
 att_folder = cs.read_from_config(config_file, 'att_path')
-att_path = basins_path / att_folder
+att_path = basins_path / att_folder / 'lumped'
 
 # -- Find files
 all_files = sorted(glob.glob(str(att_path / 'attributes*.csv')))

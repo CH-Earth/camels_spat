@@ -110,5 +110,5 @@ climate_urls         | 0_config/worldclim_links.txt                             
 att_path   | attributes | string  # Folder with where attribute .csv should go; appended to 'data_path'
 
 # 10. Analysis
-image_path | /Users/wmk934/OneDrive - University of Calgary/Postdoc/Documents/papers/paper-Knoben-CAMELspat/img | string  # Path where images will be stored
+image_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/img | string  # Path where images will be stored
 
