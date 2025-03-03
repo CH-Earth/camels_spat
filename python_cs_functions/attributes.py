@@ -14,13 +14,13 @@ from scipy.stats import circmean, circstd, skew, kurtosis
 from scipy.optimize import curve_fit
 
 ## ------- Collection functions
-def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
+def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
 
     '''Calculates attributes from SOILGRIDS maps'''
 
     # File specifiction
-    sub_folders = ['bdod',     'cfvo',       'clay',    'sand',    'silt',    'soc']
-    units       = ['cg cm^-3', 'cm^3 dm^-3', 'g kg^-1', 'g kg^-1', 'g kg^-1', 'dg kg^-1']
+    sub_folders = ['bdod',     'cfvo',       'clay',    'sand',    'silt',    'soc',      'porosity']
+    units       = ['cg cm^-3', 'cm^3 dm^-3', 'g kg^-1', 'g kg^-1', 'g kg^-1', 'dg kg^-1', '-']
     depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm']
     fields = ['mean', 'uncertainty']
     stats = ['mean', 'min', 'max', 'std']
@@ -30,24 +30,57 @@ def attributes_from_soilgrids(geo_folder, dataset, shp_str, l_values, l_index):
         for depth in depths:
             for field in fields:
                 tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
-                zonal_out = zonal_stats(shp_str, tif, stats=stats)
+                if not os.path.exists(tif): continue # porosity has no uncertainty field
+                zonal_out = zonal_stats(shp_str, tif, stats=stats, all_touched=True)
                 scale,offset = read_scale_and_offset(tif)
-                l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+                l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
                 l_index += [('Soil', f'{sub_folder}_{depth}_{field}_min',  f'{unit}', 'SOILGRIDS'),
                             ('Soil', f'{sub_folder}_{depth}_{field}_mean', f'{unit}', 'SOILGRIDS'),
                             ('Soil', f'{sub_folder}_{depth}_{field}_max',  f'{unit}', 'SOILGRIDS'),
                             ('Soil', f'{sub_folder}_{depth}_{field}_std',  f'{unit}', 'SOILGRIDS')]
+           
+    # --- Specifc processing for the conductivity fields
+    # For conductivity we want to have a harmonic mean because that should be more
+    # representative as a spatial average. rasterstats doesn't have that, so we 
+    # need a custom function. We're splitting out the processing from the rest for
+    # clarity. Could also have done this with a bunch of if-statements, but this 
+    # seems cleaner, also because conductivity doesn't have uncertainty maps.
+    
+    # Process the data fields
+    sub_folder = 'conductivity'
+    unit       = 'cm hr^-1'
+    depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm', '100-200cm']
+    field  = 'mean' # no uncertainty maps for these
+    stats = ['min', 'max', 'std']
+
+    for depth in depths:
+        tif = str(geo_folder / dataset / 'raw' / f'{sub_folder}' / f'{sub_folder}_{depth}_{field}.tif')
+        if not os.path.exists(tif): continue # porosity has no uncertainty field
+        zonal_out = zonal_stats(shp_str, tif, stats=stats, add_stats={'harmonic_mean': harmonic_mean}, all_touched=True)
+        scale,offset = read_scale_and_offset(tif)
+        l_values = update_values_list(l_values, ['min', 'max', 'std', 'harmonic_mean'], zonal_out, scale, offset, case=case)
+        l_index += [('Soil', f'{sub_folder}_{depth}_{field}_min',  f'{unit}', 'SOILGRIDS'),
+                    ('Soil', f'{sub_folder}_{depth}_{field}_harmonic_mean', f'{unit}', 'SOILGRIDS'),
+                    ('Soil', f'{sub_folder}_{depth}_{field}_max',  f'{unit}', 'SOILGRIDS'),
+                    ('Soil', f'{sub_folder}_{depth}_{field}_std',  f'{unit}', 'SOILGRIDS')]
 
     return l_values, l_index
 
-def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
+
+def attributes_from_glhymps(geo_folder, dataset, basin_shp_path, l_values, l_index, equal_area_crs='ESRI:102008'):
 
     '''Calculates attributes from GLHYMPS'''
 
-    # Load the file
+    # We need some special actions if we're dealing with the distributed case, so check that first
+    case = 'lumped'
+    if 'distributed' in basin_shp_path:
+        case = 'distributed'
+    
+    # Load the geology file
     geol_str = str(geo_folder / dataset / 'raw' / 'glhymps.shp')
     geol = gpd.read_file(geol_str)
 
+    # -- File updates
     # Rename the columns, because the shortened ones are not very helpful
     if ('Porosity' in geol.columns) and ('Permeabili' in geol.columns) \
     and ('Permeabi_1' in geol.columns) and ('Permeabi_2' in geol.columns):
@@ -55,29 +88,115 @@ def attributes_from_glhymps(geo_folder, dataset, l_values, l_index):
                              'Permeabi_1': 'logK_Ice', 'Permeabi_2': 'logK_std'}, inplace=True)
         geol.to_file(geol_str)
 
-    # Porosity
-    l_values.append( geol['porosity'].min() )
-    l_index.append(('Geology', 'porosity_min',  '-', 'GLHYMPS'))
-    l_values.append( geol['porosity'].mean() )
-    l_index.append(('Geology', 'porosity_mean',  '-', 'GLHYMPS'))
-    l_values.append( geol['porosity'].max() )
-    l_index.append(('Geology', 'porosity_max',  '-', 'GLHYMPS'))
-    l_values.append( geol['porosity'].std() )
-    l_index.append(('Geology', 'porosity_std',  '-', 'GLHYMPS'))
+    # Clean up a few unsightly processing errors
+    geol['Shape_Area'] = geol.to_crs(equal_area_crs).area
+    geol = geol[['IDENTITY_','Shape_Area','porosity','logK_Ferr','logK_Ice','logK_std','geometry']]
+    geol.to_file(geol_str)
+    # -- End file updates
 
-    # Permeability
-    l_values.append( geol['logK_Ice'].min() )
-    l_index.append(('Geology', 'log_permeability_min',  'm^2', 'GLHYMPS'))
-    l_values.append( geol['logK_Ice'].mean() )
-    l_index.append(('Geology', 'log_permeability_mean',  'm^2', 'GLHYMPS'))
-    l_values.append( geol['logK_Ice'].max() )
-    l_index.append(('Geology', 'log_permeability_max',  'm^2', 'GLHYMPS'))
-    l_values.append( geol['logK_Ice'].std() )
-    l_index.append(('Geology', 'log_permeability_std',  'm^2', 'GLHYMPS'))
+    # Ensure we have the correct areas to work with
+    if 'New_area_m2' not in geol.columns:
+        geol['New_area_m2'] = geol.to_crs(equal_area_crs).area
+        #geol.to_file(geol_str)
     
-    return l_values, l_index
+    # Now handle the different cases
+    if case == 'lumped':
+    
+        # Create areal averages and standard deviations
+        # Stdev source: https://stats.stackexchange.com/a/6536
+        porosity_mean = (geol['porosity']*geol['New_area_m2']).sum()/geol['New_area_m2'].sum()
+        num_obs_coef = ((geol['New_area_m2'] > 0).sum()-1)/(geol['New_area_m2'] > 0).sum()
+        porosity_std = np.sqrt((geol['New_area_m2'] * (geol['porosity']-porosity_mean)**2).sum() / geol['New_area_m2'].sum())
+        
+        # Porosity
+        l_values.append( geol['porosity'].min() )
+        l_index.append(('Geology', 'porosity_min',  '-', 'GLHYMPS'))
+        l_values.append( porosity_mean ) # areal average
+        l_index.append(('Geology', 'porosity_mean',  '-', 'GLHYMPS'))
+        l_values.append( geol['porosity'].max() )
+        l_index.append(('Geology', 'porosity_max',  '-', 'GLHYMPS'))
+        l_values.append( porosity_std )
+        l_index.append(('Geology', 'porosity_std',  '-', 'GLHYMPS'))
+    
+        # Create areal averages and standard deviations
+        # Stdev source: https://stats.stackexchange.com/a/6536
+        permeability_mean = (geol['logK_Ice']*geol['New_area_m2']).sum()/geol['New_area_m2'].sum()
+        num_obs_coef = ((geol['New_area_m2'] > 0).sum()-1)/(geol['New_area_m2'] > 0).sum()
+        permeability_std = np.sqrt((geol['New_area_m2'] * (geol['logK_Ice']-permeability_mean)**2).sum() / geol['New_area_m2'].sum())
+        
+        # Permeability
+        l_values.append( geol['logK_Ice'].min() )
+        l_index.append(('Geology', 'log_permeability_min',  'm^2', 'GLHYMPS'))
+        l_values.append( permeability_mean )
+        l_index.append(('Geology', 'log_permeability_mean',  'm^2', 'GLHYMPS'))
+        l_values.append( geol['logK_Ice'].max() )
+        l_index.append(('Geology', 'log_permeability_max',  'm^2', 'GLHYMPS'))
+        l_values.append( permeability_std )
+        l_index.append(('Geology', 'log_permeability_std',  'm^2', 'GLHYMPS'))
 
-def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index):
+        # Set the remaining output
+        l_comids_glhymps = None
+
+    # Case 2
+    elif case == 'distributed':
+    
+        # Load the basin shape 
+        basin = gpd.read_file(basin_shp_path)
+
+        # Loop over the individual polygons and create a new mini-HydroLAKES geodataframe for each polygon
+        num_poly = len(basin)
+        l_comids_glhymps = basin['COMID'].values
+        for i_poly in range(num_poly):
+
+            # Rest the storage lists
+            tmp_values = []
+            tmp_index = []
+
+            # Subset the shape to the subbasin
+            poly_glhymps = subset_glhymps_to_subbasin(geol, basin.iloc[i_poly]['geometry'], equal_area_crs)
+
+            # Create areal averages and standard deviations
+            # Stdev source: https://stats.stackexchange.com/a/6536
+            porosity_mean = (poly_glhymps['porosity']*poly_glhymps['New_area_m2']).sum()/poly_glhymps['New_area_m2'].sum()
+            num_obs_coef = ((poly_glhymps['New_area_m2'] > 0).sum()-1)/(poly_glhymps['New_area_m2'] > 0).sum()
+            porosity_std = np.sqrt((poly_glhymps['New_area_m2'] * (poly_glhymps['porosity']-porosity_mean)**2).sum() / poly_glhymps['New_area_m2'].sum())
+            
+            # Porosity
+            tmp_values.append( poly_glhymps['porosity'].min() )
+            tmp_index.append(('Geology', 'porosity_min',  '-', 'GLHYMPS'))
+            tmp_values.append( porosity_mean ) # areal average
+            tmp_index.append(('Geology', 'porosity_mean',  '-', 'GLHYMPS'))
+            tmp_values.append( poly_glhymps['porosity'].max() )
+            tmp_index.append(('Geology', 'porosity_max',  '-', 'GLHYMPS'))
+            tmp_values.append( porosity_std )
+            tmp_index.append(('Geology', 'porosity_std',  '-', 'GLHYMPS'))
+        
+            # Create areal averages and standard deviations
+            # Stdev source: https://stats.stackexchange.com/a/6536
+            permeability_mean = (poly_glhymps['logK_Ice']*poly_glhymps['New_area_m2']).sum()/poly_glhymps['New_area_m2'].sum()
+            num_obs_coef = ((poly_glhymps['New_area_m2'] > 0).sum()-1)/(poly_glhymps['New_area_m2'] > 0).sum()
+            permeability_std = np.sqrt((poly_glhymps['New_area_m2'] * (poly_glhymps['logK_Ice']-permeability_mean)**2).sum() / poly_glhymps['New_area_m2'].sum())
+            
+            # Permeability
+            tmp_values.append( poly_glhymps['logK_Ice'].min() )
+            tmp_index.append(('Geology', 'log_permeability_min',  'm^2', 'GLHYMPS'))
+            tmp_values.append( permeability_mean )
+            tmp_index.append(('Geology', 'log_permeability_mean',  'm^2', 'GLHYMPS'))
+            tmp_values.append( poly_glhymps['logK_Ice'].max() )
+            tmp_index.append(('Geology', 'log_permeability_max',  'm^2', 'GLHYMPS'))
+            tmp_values.append( permeability_std )
+            tmp_index.append(('Geology', 'log_permeability_std',  'm^2', 'GLHYMPS'))
+            
+
+            # Add the new values for this subbasin into the main l_values list
+            l_values[i_poly] = tmp_values # This works because we create a unique dataframe just for HydroLAKES results
+
+        # End of subbasin loop, add the new index entries only once
+        l_index = tmp_index # we don't use append() in the distributed case because we'll be storing this in a dedicated HydroLAKES attribute df
+    
+    return l_values, l_index, l_comids_glhymps
+
+def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
     
     '''Calculates statistics for Pelletier maps'''
     # See: https://daac.ornl.gov/SOILS/guides/Global_Soil_Regolith_Sediment.html
@@ -95,10 +214,10 @@ def attributes_from_pelletier(geo_folder, dataset, shp_str, l_values, l_index):
     for file,att,unit in zip(files,attrs,units):
         tif = str( geo_folder / dataset / 'raw' / file )
         check_and_set_nodata_value_on_pelletier_file(tif)
-        zonal_out = zonal_stats(shp_str, tif, stats=stats)
+        zonal_out = zonal_stats(shp_str, tif, stats=stats, all_touched=True)
         zonal_out = check_zonal_stats_outcomes(zonal_out, new_val=0) # certain tifs have no data because there is no variable X, so we set these to 0
         scale,offset = read_scale_and_offset(tif)
-        l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+        l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
         l_index += [('Soil', f'{att}_min',  f'{unit}', 'Pelletier'),
                     ('Soil', f'{att}_mean', f'{unit}', 'Pelletier'),
                     ('Soil', f'{att}_max',  f'{unit}', 'Pelletier'),
@@ -131,10 +250,7 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     m_per_km = 1000 # m km-1
     
     # Find the data source
-    if row['Country'] == 'CAN':
-        source = 'WSC'
-    elif row['Country'] == 'USA':
-        source = 'USGS'
+    source = 'USGS/WSC'
     
     # Load observations
     hyd_file = hyd_folder / f'{basin_id}_daily_flow_observations.nc'
@@ -148,15 +264,22 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     
     # Convert precipitation into mm d-1
     pre = (pre * seconds_per_hour).resample(time='1D').sum() / water_density * mm_per_m # ([kg m-2 s-1] * [s hr-1]).resample(time='1D').sum() / [kg m-3] * [mm m-1] = [mm d-1]
+    pre = subset_dataset_to_max_full_years(pre, res='day', water_year=True)
     
-    # Match times between hydrologic data and precipitation
-    pre = pre.sel(time=slice(hyd['time'][0].values, hyd['time'][-1].values))
-    assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
-    assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
-    
+    # 2025-01-26 
+    # We need to disable these checks because we're now mainly using RDRS for forcing, and RDRS has a more limited time span than ERA5 does
+    # As a result, if we match the hydrologic data to the RDRS period we'll lose a lot of data for stations with obs starting before 1980
+    # We now thus subset the hydrologic data only inside the calculate_signatures() function, for the two signatures that use precip data
+    # Keeping the code below for posterity
+    #
+    ## Match times between hydrologic data and precipitation
+    #pre = pre.sel(time=slice(hyd['time'][0].values, hyd['time'][-1].values))
+    #assert hyd['time'][0].values == pre['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp'
+    #assert hyd['time'][-1].values == pre['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    #
     # Gap-fill the streamflow series if needed, so that we have identical length time series to work with
     hyd = hyd.resample(time='D').asfreq()
-    assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
+    #assert len(hyd['time']) == len(pre['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
 
     # Create a water-year time variable
     hyd['water_year'] = hyd['time'].dt.year.where(hyd['time'].dt.month < 10, hyd['time'].dt.year + 1)
@@ -168,111 +291,507 @@ def attributes_from_streamflow(hyd_folder, dataset, basin_id, pre, row, l_values
     l_index.append( ('Hydrology', 'num_years_hyd ', 'years', '-') )
     
     # Signatures
-    calculate_signatures(hyd, pre, source, l_values, l_index)
+    l_values, l_index = calculate_signatures(hyd, pre, source, l_values, l_index)
     
     return l_values, l_index
 
-def attributes_from_hydrolakes(geo_folder, dataset, l_values, l_index):
+def attributes_from_hydrolakes(geo_folder, dataset, basin_shp_path, ea_crs, l_values, l_index):
     
     '''Calculates open water attributes from HydroLAKES'''
 
+    # We need some special actions if we're dealing with the distributed case, so check that first
+    case = 'lumped'
+    if 'distributed' in basin_shp_path:
+        case = 'distributed'
+    
     # Define the standard file name
     lake_str = str(geo_folder / dataset / 'raw' / 'HydroLAKES_polys_v10_NorthAmerica.shp')
 
-    # Check if the file exists (some basins won't have lakes)
-    lakes = None # if we have a lake file this will get overwritten - we use this in get_open_water_stats()
-    if os.path.exists(lake_str):
-        lakes = gpd.read_file(lake_str)
+    # Now handle the different cases
+    if case == 'lumped':
 
-        # General stats
-        res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
-        num_lakes = len(lakes)
-        num_resvr = res_mask.sum() 
-    else:
-        num_lakes = 0
-        num_resvr = 0
-    l_values.append(num_lakes)
-    l_index.append(('Open water', 'open_water_number',  '-', 'HydroLAKES'))
-    l_values.append(num_resvr)
-    l_index.append(('Open water', 'known_reservoirs',  '-', 'HydroLAKES'))
+        # Check if the file exists (some basins won't have lakes)
+        if os.path.exists(lake_str):
+            lakes = gpd.read_file(lake_str)
+            res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
+            num_lakes = len(lakes)
+            num_resvr = res_mask.sum()
 
-    # Summary stats
-    l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'all', l_values, l_index) # All open water
-    l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'all', l_values, l_index)
-    l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'reservoir', l_values, l_index) # Reservoirs only
-    l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'reservoir', l_values, l_index)
+        else: # no lakes shapefile
+            lakes = None # this tells get_open_water_stats() that we had no lake shapefile
+            num_lakes = 0
+            num_resvr = 0
 
-    return l_values, l_index
+        l_values.append(num_lakes)
+        l_index.append(('Open water', 'open_water_number',  '-', 'HydroLAKES'))
+        l_values.append(num_resvr)
+        l_index.append(('Open water', 'known_reservoirs',  '-', 'HydroLAKES'))
 
-def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, l_index):
+        # Summary stats
+        l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'all', l_values, l_index) # All open water
+        l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'all', l_values, l_index)
+        l_values, l_index = get_open_water_stats(lakes, 'Lake_area', 'reservoir', l_values, l_index) # Reservoirs only
+        l_values, l_index = get_open_water_stats(lakes, 'Vol_total', 'reservoir', l_values, l_index)
+
+        # set the remaing output
+        l_comids_lakes = None
+
+    elif case == 'distributed':
+
+        # Load the basin shape 
+        basin = gpd.read_file(basin_shp_path)
+        
+        # Load the lake shape if we have one
+        if os.path.exists(lake_str):
+            lakes = gpd.read_file(lake_str)
+        else:
+            lakes = None # we use this to indicate we had no lakes at all
+            
+        # Loop over the individual polygons and create a new mini-HydroLAKES geodataframe for each polygon
+        num_poly = len(basin)
+        l_comids_lakes = basin['COMID'].values
+        for i_poly in range(num_poly):
+
+            # Rest the storage lists
+            tmp_values = []
+            tmp_index = []
+
+            # subset the 'lakes' gdf to each individual polygon if we have 'lakes'           
+            if lakes is not None:
+                poly_lakes = subset_hydrolakes_to_subbasin(lakes, basin.iloc[i_poly]['geometry'], ea_crs)
+
+                # Now see if we have a lake at all, and act accordingly
+                if len(poly_lakes) > 0:
+                    res_mask  = lakes['Lake_type'] == 2 # Lake Type 2 == reservoir; see docs (https://data.hydrosheds.org/file/technical-documentation/HydroLAKES_TechDoc_v10.pdf)
+                    num_lakes = len(lakes)
+                    num_resvr = res_mask.sum()
+        
+                else: # no lakes in this subbasins
+                    poly_lakes = None # this tells get_open_water_stats() that we had no lake shapefile
+                    num_lakes = 0
+                    num_resvr = 0
+            elif lakes is None: # this means we didn't have a lakes shapefile for this basin at all
+                poly_lakes = None # this tells get_open_water_stats() we had nothing
+                num_lakes = 0
+                num_resvr = 0
+
+            # Stats
+            tmp_values.append(num_lakes)
+            tmp_index.append(('Open water', 'open_water_number',  '-', 'HydroLAKES'))
+            tmp_values.append(num_resvr)
+            tmp_index.append(('Open water', 'known_reservoirs',  '-', 'HydroLAKES'))
+            tmp_values, tmp_index = get_open_water_stats(poly_lakes, 'Lake_area', 'all', tmp_values, tmp_index) # All open water
+            tmp_values, tmp_index = get_open_water_stats(poly_lakes, 'Vol_total', 'all', tmp_values, tmp_index)
+            tmp_values, tmp_index = get_open_water_stats(poly_lakes, 'Lake_area', 'reservoir', tmp_values, tmp_index) # Reservoirs only
+            tmp_values, tmp_index = get_open_water_stats(poly_lakes, 'Vol_total', 'reservoir', tmp_values, tmp_index)
+
+            # Add the new values for this subbasin into the main l_values list
+            l_values[i_poly] = tmp_values # This works because we create a unique dataframe just for HydroLAKES results
+
+        # End of subbasin loop, add the new index entries only once
+        l_index = tmp_index # we don't use append() in the distributed case because we'll be storing this in a dedicated HydroLAKES attribute df
+
+    return l_values, l_index, l_comids_lakes
+
+def attributes_from_merit(geo_folder, dataset, shp_str, riv_str, row, l_values, l_index, equal_area_crs='ESRI:102008', case='lumped'):
     
     '''Calculates topographic attributes from MERIT data'''
 
+    # We need some special actions if we're dealing with the distributed case, so check that first
+    case = 'lumped'
+    if 'distributed' in shp_str:
+        case = 'distributed'
+
+    # Load the shapefile
+    basin = gpd.read_file(shp_str)
+
     ## Known values
-    lat = row['Station_lat']
-    lon = row['Station_lon']
-    area= row['Basin_area_km2']
-    src = row['Station_source']
-    l_values.append(lat)
-    l_index.append(('Topography', 'gauge_lat',  'degrees', f'{src}'))
-    l_values.append(lon)
-    l_index.append(('Topography', 'gauge_lon',  'degrees', f'{src}'))
-    l_values.append(area)
-    l_index.append(('Topography', 'basin_area', 'km^2', 'MERIT Hydro'))
+    if case == 'lumped':
+        clon = basin.to_crs(equal_area_crs).centroid.to_crs('EPSG:4326').x.iloc[0] # lon
+        clat = basin.to_crs(equal_area_crs).centroid.to_crs('EPSG:4326').y.iloc[0] # lat       
+        area = row['Basin_area_km2']
+        slat = row['Station_lat']
+        slon = row['Station_lon']
+        src  = row['Station_source']
+        l_values.append(clat)
+        l_index.append(('Topography', 'centroid_lat',  'degrees', 'MERIT Hydro'))
+        l_values.append(clon)
+        l_index.append(('Topography', 'centroid_lon',  'degrees', 'MERIT Hydro'))
+        l_values.append(area)
+        l_index.append(('Topography', 'basin_area', 'km^2', 'MERIT Hydro'))
+        l_values.append(slat)
+        l_index.append(('Topography', 'gauge_lat',  'degrees', 'USGS/WSC'))
+        l_values.append(slon)
+        l_index.append(('Topography', 'gauge_lon',  'degrees', 'USGS/WSC'))
+    
+    elif case == 'distributed':
+        num_poly = len(basin)
+        for i_poly in range(num_poly):
+            clon = basin.to_crs(equal_area_crs).centroid.to_crs('EPSG:4326').x.iloc[i_poly] # lon
+            clat = basin.to_crs(equal_area_crs).centroid.to_crs('EPSG:4326').y.iloc[i_poly] # lat       
+            area = (basin.to_crs(equal_area_crs).area / 10**6).iloc[i_poly]
+            l_values[i_poly].append(clat)
+            l_values[i_poly].append(clon)
+            l_values[i_poly].append(area)    
+        l_index.append(('Topography', 'centroid_lat',  'degrees', 'MERIT Hydro')) # these are outside the subbasin loop because we need them only once
+        l_index.append(('Topography', 'centroid_lon',  'degrees', 'MERIT Hydro'))
+        l_index.append(('Topography', 'basin_area', 'km^2', 'MERIT Hydro'))    
 
     ## RASTERS
-    # Slope and elevation can use zonal stats
+    # Slope and elevation can use zonal stats built-ins
     files = [str(geo_folder / dataset / 'raw'    / 'merit_hydro_elv.tif'),
              str(geo_folder / dataset / 'slope'  / 'merit_hydro_slope.tif')]
     attrs = ['elev',     'slope']
     units = ['m.a.s.l.', 'degrees']
     stats = ['mean', 'min', 'max', 'std']
     for tif,att,unit in zip(files,attrs,units):
-        zonal_out = zonal_stats(shp_str, tif, stats=stats)
+        zonal_out = zonal_stats(shp_str, tif, stats=stats, all_touched=True)
         scale,offset = read_scale_and_offset(tif)
-        l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+        l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
         l_index += [('Topography', f'{att}_min',  f'{unit}', 'MERIT Hydro'),
                     ('Topography', f'{att}_mean', f'{unit}', 'MERIT Hydro'),
                     ('Topography', f'{att}_max',  f'{unit}', 'MERIT Hydro'),
                     ('Topography', f'{att}_std',  f'{unit}', 'MERIT Hydro')]
 
-    # Aspect needs circular stats
+    # Aspect needs circular stats as custom input
+    stats = ['min', 'max']
     tif = str(geo_folder / dataset / 'aspect' / 'merit_hydro_aspect.tif')
-    l_values, l_index = get_aspect_attributes(tif,l_values,l_index) 
-
-    ## VECTOR
-    l_values, l_index = get_river_attributes(riv_str, l_values, l_index, area)
+    zonal_out = zonal_stats(shp_str, tif, stats=stats, add_stats={'circ_mean': calc_circmean,
+                                                                  'circ_std':  calc_circstd}, all_touched=True)
+    scale,offset = read_scale_and_offset(tif)
+    l_values = update_values_list(l_values, ['min', 'max', 'circ_mean', 'circ_std'], zonal_out, scale, offset, case=case)
+    l_index += [('Topography', 'aspect_min',   'degrees', 'MERIT Hydro'),
+                ('Topography', 'aspect_mean',  'degrees', 'MERIT Hydro'),
+                ('Topography', 'aspect_max',   'degrees', 'MERIT Hydro'),
+                ('Topography', 'aspect_std',   'degrees', 'MERIT Hydro')]
+    #l_values, l_index = csa.get_aspect_attributes(tif,l_values,l_index)
     
-    return l_values, l_index
+    ## VECTOR
+    l_values, l_index, merit_comids = get_river_attributes(riv_str, shp_str, l_values, l_index, area, equal_area_crs=equal_area_crs)
+    
+    return l_values, l_index, merit_comids
 
-def attributes_from_lgrip30(geo_folder, dataset, shp_str, l_values, l_index):
+def attributes_from_lgrip30(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
 
     '''Calculates percentage occurrence of all classes in LGRIP30 map'''
 
     tif = geo_folder / dataset / 'raw' / 'lgrip30_agriculture.tif'
-    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    zonal_out = zonal_stats(shp_str, tif, categorical=True, all_touched=True)
     check_scale_and_offset(tif)
-    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'LGRIP30', prefix='lc3_')
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'LGRIP30', prefix='lc3_', case=case)
     return l_values, l_index
 
-def attributes_from_modis_land(geo_folder, dataset, shp_str, l_values, l_index):
+def attributes_from_modis_land(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
 
     '''Calculates percentage occurrence of all classes in MODIS IGBP map'''
 
     tif = geo_folder / dataset / 'raw' / '2001_2022_mode_MCD12Q1_LC_Type1.tif'
-    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    zonal_out = zonal_stats(shp_str, tif, categorical=True, all_touched=True)
     check_scale_and_offset(tif)
-    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'MCD12Q1.061', prefix='lc2_')
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'MCD12Q1.061', prefix='lc2_', case=case)
     return l_values, l_index
 
-def attributes_from_glclu2019(geo_folder, dataset, shp_str, l_values, l_index):
+def attributes_from_glclu2019(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
 
     '''Calculates percentage occurrence of all classes in GLCLU2019 map'''
 
     tif = geo_folder / dataset / 'raw' / 'glclu2019_map.tif'
-    zonal_out = zonal_stats(shp_str, tif, categorical=True)
+    zonal_out = zonal_stats(shp_str, tif, categorical=True, all_touched=True)
     check_scale_and_offset(tif)
-    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'GLCLU 2019', prefix='lc1_')
+    l_values,l_index = update_values_list_with_categorical(l_values, l_index, zonal_out, 'GLCLU 2019', prefix='lc1_', case=case)
+    return l_values, l_index
+
+
+def attributes_from_rdrs(met_folder, shp_path, dataset, l_values, l_index, use_mfdataset=False):
+
+    '''Calculates a variety of metrics from RDRS data'''
+
+    # Define file locations, depending on if we are dealing with lumped or distributed cases
+    if 'lumped' in shp_path:
+        rdrs_folder = met_folder / 'lumped'
+        case = 'lumped'
+    elif 'distributed' in shp_path:
+        rdrs_folder = met_folder / 'distributed'
+        case = 'distributed'
+    rdrs_files = sorted( glob.glob( str(rdrs_folder / 'RDRS_*.nc') ) )
+    print(f'Running {case} case for RDRS data.')
+
+    # Open the data
+    if use_mfdataset or (case == 'distributed'):
+        ds = xr.open_mfdataset(rdrs_files, combine="by_coords") # Don't use 'decode_cf=False' > this somehow loses most of the timesteps
+    else:
+        ds = xr.merge([xr.open_dataset(f) for f in rdrs_files])
+
+    # --- Act according to case
+    if case == 'lumped':
+
+        # -- Load the data into memory
+        ds = ds.load()
+        ds = ds.isel(hru=0) # We need this so the lumped and distributed cases have the same dimensions inside the calculation function: (time,nbnds)
+                            # Without this, the lumped case has an extra 'hru' dimension (length 1) and this complicates value extraction
+        
+        # -- Get the precipitation for hydrologic signature calculations later; this avoids having to reload the entire dataset another time
+        ds_precip = ds['RDRS_v2.1_A_PR0_SFC'].copy()
+
+        # --- Calculate the statistics
+        l_values, l_index = calculate_rdrs_stats_from_ds(ds,l_values,l_index)
+        return l_values, l_index, ds_precip, ds
+    
+    elif case == 'distributed':
+
+        comid_order = [] # we need these later, to ensure we line the forcing attributes up with the geospatial attributes correctly
+
+        # Loop over the HRUs
+        num_hru = len(ds['hru'])
+        for i in range(0,num_hru):
+
+            print(f'Running subbasin {i}')
+
+            # Load the data for this sub-basin
+            ds_hru = ds.isel(hru=i) # example
+            ds_hru.load() # Load data into memory; done in place
+
+            # Specifically track the hruID (COMID) so we can ensure correct matches with the rest of the attributes later
+            assert (ds_hru['hruId'].values == ds_hru['hruId'][0].values).all(), f"COMIDs not all identical {ds_hru['hruId'].values}"
+            comid_order.append(ds_hru['hruId'][0].values)
+
+            # calculate the stats
+            tmp_values = [] # statistics for this subbasin - we need a single empty list so we can properly store in the nested list later
+            tmp_index  = [] # we also store the index in a tmp variable, so we only get this once instead of appending num_hru times to the main index list
+            tmp_values, tmp_index = calculate_rdrs_stats_from_ds(ds_hru,tmp_values,tmp_index) 
+            l_values.append(tmp_values)
+
+        # prep outputs
+        comid_order = [arr.tolist() for arr in comid_order] # convert list of arrays to simple list
+        l_index.append(tmp_index) # need this only once; tmp_index is already a list so this creates a nested list: [['Climate', 'num_years_rdrs', 'years', 'RDRS')]]
+        return l_values, l_index[0], comid_order, ds # we need l_index[0] to return a non-nested list
+
+def calculate_rdrs_stats_from_ds(ds,l_values,l_index):
+
+    # Define various conversion constants
+    water_density = 1000 # kg m-3
+    mm_per_m = 1000 # mm m-1
+    seconds_per_hour = 60*60 # s h-1
+    seconds_per_day = seconds_per_hour*24 # s d-1
+    days_per_month = np.array([31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]).reshape(-1, 1).flatten() # d month-1 || NOTE: added the .flatten() for distributed case, not tested for lumped
+    days_per_year = days_per_month.sum()
+    flip_sign = -1 # -; used to convert PET from negative (by convention this indicates an upward flux) to positive (ERA5 only)
+    kelvin_to_celsius = -273.15
+    pa_per_kpa = 1000 # Pa kPa-1
+    
+    # Select whole years only
+    #   This avoids issues in cases where we have incomplete whole data years
+    #   (e.g. 2000-06-01 to 2007-12-31) in basins with very seasonal weather
+    #   (e.g. all precip occurs in Jan, Feb, Mar). By using only full years
+    #   we avoid accidentally biasing the attributes.
+    ds = subset_dataset_to_max_full_years(ds)
+    num_years = len(ds.groupby('time.year'))
+    l_values.append(num_years)
+    l_index.append( ('Climate', 'num_years_rdrs', 'years', 'RDRS') )
+
+    # --- Annual statistics (P, PET, T, aridity, seasonality, temperature, snow)
+    # P
+    yearly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_pr0.mean().values)
+    l_index.append(('Climate', 'PR0_mean', 'mm', 'RDRS'))
+    l_values.append(yearly_pr0.std().values)
+    l_index.append(('Climate', 'PR0_std', 'mm', 'RDRS'))
+
+    # PET
+    yearly_pet = ds['pet'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
+    l_values.append(yearly_pet.mean().values)
+    l_index.append(('Climate', 'pet1_mean', 'mm', 'RDRS'))
+    l_values.append(yearly_pet.std().values)
+    l_index.append(('Climate', 'pet1_std', 'mm', 'RDRS'))
+
+    # T
+    yearly_tt = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1Y').mean() + kelvin_to_celsius # K > C
+    l_values.append(yearly_tt.mean().values)
+    l_index.append(('Climate', 'TT_mean', 'C', 'RDRS'))
+    l_values.append(yearly_tt.std().values)
+    l_index.append(('Climate', 'TT_std', 'C', 'RDRS'))
+
+    # Aridity
+    yearly_ari  = yearly_pet / yearly_pr0
+    l_values.append(yearly_ari.mean().values)
+    l_index.append(('Climate', 'aridity1_mean', '-', 'RDRS'))
+    l_values.append(yearly_ari.std().values)
+    l_index.append(('Climate', 'aridity1_std', '-', 'RDRS'))
+
+    # Snow
+    ds['snow'] = xr.where(ds['RDRS_v2.1_P_TT_1.5m'] < 273.15, ds['RDRS_v2.1_A_PR0_SFC'],0)
+    yearly_snow = ds['snow'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density
+    yearly_fs = yearly_snow / yearly_pr0
+    l_values.append(yearly_fs.mean().values)
+    l_index.append(('Climate', 'fracsnow1_mean', '-', 'RDRS'))
+    l_values.append(yearly_fs.std().values)
+    l_index.append(('Climate', 'fracsnow1_std', '-', 'RDRS'))
+
+    # Seasonality
+    seasonality = find_climate_seasonality_rdrs(ds,use_typical_cycle=False)
+    l_values.append(seasonality.mean())
+    l_index.append(('Climate', 'seasonality1_mean', '-', 'RDRS'))
+    l_values.append(seasonality.std())
+    l_index.append(('Climate', 'seasonality1_std', '-', 'RDRS'))
+
+    # --- Monthly attributes
+    # Calculate monthly PET in mm
+    #      kg m-2 s-1 / kg m-3
+    # mm month-1 = kg m-2 s-1 * kg-1 m3 * s d-1 * d month-1 * mm m-1 * -
+    monthly_pet = ds['pet'].resample(time='1M').mean().groupby('time.month')
+    pet_m = monthly_pet.mean() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    pet_s = monthly_pet.std() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
+    l_values, l_index = process_monthly_means_to_lists(pet_m, 'mean', l_values, l_index, 'pet1', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pet_s, 'std', l_values, l_index, 'pet1', 'mm', source='RDRS')
+
+    # Same for precipitation: [mm month-1]
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean().groupby('time.month')
+    pr0_m = monthly_pr0.mean() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    pr0_s = monthly_pr0.std() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
+    l_values, l_index = process_monthly_means_to_lists(pr0_m, 'mean', l_values, l_index, 'PR0', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pr0_s, 'std', l_values, l_index, 'PR0', 'mm', source='RDRS')
+
+    # Monthly temperature statistics [C]
+    monthly_tavg = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tavg_m = monthly_tavg.mean()
+    tavg_s = monthly_tavg.std()
+    l_values, l_index = process_monthly_means_to_lists(tavg_m, 'mean', l_values, l_index, 'tdavg', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tavg_s, 'std', l_values, l_index, 'tdavg', 'C', source = 'RDRS')
+
+    monthly_tmin = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').min().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tmin_m = monthly_tmin.mean()
+    tmin_s = monthly_tmin.std()
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'mean', l_values, l_index, 'tdmin', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tmin_m, 'std', l_values, l_index, 'tdmin', 'C', source = 'RDRS')
+    
+    monthly_tmax = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').max().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
+    tmax_m = monthly_tmax.mean()
+    tmax_s = monthly_tmax.std()
+    l_values, l_index = process_monthly_means_to_lists(tmax_m, 'mean', l_values, l_index, 'tdmax', 'C', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(tmax_s, 'std', l_values, l_index, 'tdmax', 'C', source = 'RDRS')
+
+    # Monthly shortwave and longwave [W m-2]
+    monthly_sw = ds['RDRS_v2.1_P_FB_SFC'].resample(time='1M').mean().groupby('time.month')
+    sw_m = monthly_sw.mean()
+    sw_s = monthly_sw.std()
+    l_values, l_index = process_monthly_means_to_lists(sw_m, 'mean', l_values, l_index, 'FB', 'W m^-2', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(sw_s, 'std', l_values, l_index, 'FB', 'W m^-2', source = 'RDRS')
+    
+    monthly_lw = ds['RDRS_v2.1_P_FI_SFC'].resample(time='1M').mean().groupby('time.month')
+    lw_m = monthly_lw.mean(dim='time')
+    lw_s = monthly_lw.std(dim='time')
+    l_values, l_index = process_monthly_means_to_lists(lw_m, 'mean', l_values, l_index, 'FI', 'W m^-2', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(lw_s, 'std', l_values, l_index, 'FI', 'W m^-2', source = 'RDRS')
+
+    # Surface pressure [Pa]
+    monthly_sp = ds['RDRS_v2.1_P_P0_SFC'].resample(time='1M').mean().groupby('time.month')
+    sp_m = monthly_sp.mean() / pa_per_kpa # [Pa] > [kPa]
+    sp_s = monthly_sp.std() / pa_per_kpa
+    l_values, l_index = process_monthly_means_to_lists(sp_m, 'mean', l_values, l_index, 'P0', 'kPa', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(sp_s, 'std', l_values, l_index, 'P0', 'kPa', source = 'RDRS')
+
+    # Humidity [-]
+    monthly_q = ds['RDRS_v2.1_P_HU_1.5m'].resample(time='1M').mean().groupby('time.month') # specific
+    q_m = monthly_q.mean()
+    q_s = monthly_q.std()
+    l_values, l_index = process_monthly_means_to_lists(q_m, 'mean', l_values, l_index, 'HU', 'kg kg^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(q_s, 'std', l_values, l_index, 'HU', 'kg kg^-1', source = 'RDRS')
+    
+    monthly_rh = ds['RDRS_v2.1_P_HR_1.5m'].resample(time='1M').mean().groupby('time.month') # relative
+    rh_m = monthly_rh.mean()
+    rh_s = monthly_rh.std()
+    l_values, l_index = process_monthly_means_to_lists(rh_m, 'mean', l_values, l_index, 'HR', 'kPa kPa^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(rh_s, 'std', l_values, l_index, 'HR', 'kPa kPa^-1', source = 'RDRS')
+
+    # Wind speed [m s-1]
+    monthly_w = ds['RDRS_v2.1_P_UVC_10m'].resample(time='1M').mean().groupby('time.month')
+    w_m = monthly_w.mean()
+    w_s = monthly_w.std()
+    l_values, l_index = process_monthly_means_to_lists(w_m, 'mean', l_values, l_index, 'UVC', 'm s^-1', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(w_s, 'std', l_values, l_index, 'UVC', 'm s^-1', source = 'RDRS')
+
+    # Wind direction
+    monthly_phi = ds['phi'].resample(time='1M').apply(circmean_group).groupby('time.month')
+    phi_m = monthly_phi.apply(circmean_group)
+    phi_s = monthly_phi.apply(circstd_group)
+    l_values, l_index = process_monthly_means_to_lists(phi_m, 'mean', l_values, l_index, 'phi', 'degrees', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(phi_s, 'std', l_values, l_index, 'phi', 'degrees', source = 'RDRS')
+
+    # aridity
+    monthly_pet = ds['pet'].resample(time='1M').mean()
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean()
+    if (monthly_pr0 == 0).any():
+        print(f'--- WARNING: attributes_from_rdrs(): adding 1 mm to monthly precipitation to avoid divide by zero error in aridity calculation')
+        monthly_pr0[(monthly_pr0 == 0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_ari = (monthly_pet / monthly_pr0).groupby('time.month')
+    ari_m = monthly_ari.mean()
+    ari_s = monthly_ari.std()
+    l_values, l_index = process_monthly_means_to_lists(ari_m, 'mean', l_values, l_index, 'aridity1', '-', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(ari_s, 'std', l_values, l_index, 'aridity1', '-', source = 'RDRS')
+
+    # snow
+    monthly_snow = ds['snow'].resample(time='1M').mean()
+    monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean()
+    if (monthly_pr0 == 0).any():
+        print(f'--- WARNING: attributes_from_rdrs(): adding 1 mm to monthly precipitation to avoid divide by zero error in snow calculation. Note that by definition this cannot change the fraction snow result (if there is 0 precip, none of it will fall as snow)')
+        monthly_pr0[(monthly_pr0 == 0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+    monthly_snow = (monthly_snow / monthly_pr0).groupby('time.month')
+    fsnow_m = monthly_snow.mean()
+    fsnow_s = monthly_snow.std()
+    l_values, l_index = process_monthly_means_to_lists(fsnow_m, 'mean', l_values, l_index, 'fracsnow1', '-', source = 'RDRS')
+    l_values, l_index = process_monthly_means_to_lists(fsnow_s, 'std', l_values, l_index, 'fracsnow1', '-', source = 'RDRS') 
+
+    # --- High-frequency statistics (high/low duration/timing/magnitude)
+    #  Everyone does precip. We'll add temperature too as a drought/frost indicator
+    
+    # -- LOW TEMPERATURE
+    variable  = 'RDRS_v2.1_P_TT_1.5m'
+    low_threshold = 273.15 # K, freezing point
+    low_condition = ds[variable] < low_threshold
+    l_values,l_index = calculate_temp_prcp_stats('temp',low_condition,'low',l_values,l_index, dataset='RDRS')
+
+    # -- HIGH TEMPERATURE
+    # WMO defines a heat wave as a 5-day or longer period with maximum daily temperatures 5C above 
+    # "standard" daily max temperature (1961-1990; source:
+    # https://www.ifrc.org/sites/default/files/2021-06/10-HEAT-WAVE-HR.pdf).
+    # We define a "hot day" therefore as a day with a maximum temperature 5 degrees over the 
+    # the long-term mean maximum temperature.
+    #   Note: we don't have 1961-1990 data for some stations, so we stick with long-term mean.
+    #   Note: this will in most cases slightly underestimate heat waves compared to WMO definition
+    
+    # First, we identify the long-term mean daily maximum temperature in a dedicated function
+    var = 'RDRS_v2.1_P_TT_1.5m'
+    high_threshold = create_mean_daily_max_series(ds,var=var)
+    
+    # Next, we check if which 't' values are 5 degrees above the long-term mean daily max 
+    #  ("(ds['t'] > result_array + 5)"), and resample this to a daily time series 
+    #  ("resample(time='1D')") filled with "True" if any value in that day was True.
+    daily_flags = (ds[var] > high_threshold + 5).resample(time='1D').any()
+    
+    # Finally, we reindex these daily flags back onto the hourly time series by filling values
+    high_condition = daily_flags.reindex_like(ds[var], method='ffill')
+    
+    # Now calculate stats like before
+    l_values,l_index = calculate_temp_prcp_stats('temp',high_condition,'high',l_values,l_index, dataset='RDRS')
+
+    # -- LOW PRECIPITATION
+    variable = 'RDRS_v2.1_A_PR0_SFC'
+    # We'll stick with the original CAMELS definition of low precipitation: < 1 mm day-1
+    # It may not make too much sense to look at "dry hours" so we'll do this analysis at daily step
+    low_threshold = 1 # [mm d-1]
+    # Create daily precipitation sum (divided by density, times mm m-1 cancels out)
+    # [kg m-2 s-1] * [s h-1] / [kg m-3] * [mm m-1] = [mm h-1]
+    low_condition = (ds[variable] * seconds_per_hour).resample(time='1D').sum() < low_threshold
+    l_values,l_index = calculate_temp_prcp_stats('prec',low_condition,'low',l_values,l_index,
+                                             units='days', dataset='RDRS') # this 'units' argument prevents conversion to days inside the functiom
+    
+    # -- HIGH PRECIPITATION
+    # CAMELS: > 5 times mean daily precip
+    high_threshold = 5 * (ds[variable] * seconds_per_hour).resample(time='1D').sum().mean()
+    high_condition = (ds[variable] * seconds_per_hour).resample(time='1D').sum() >= high_threshold
+    l_values,l_index = calculate_temp_prcp_stats('prec',high_condition,'high',l_values,l_index,
+                                                 units='days', dataset='RDRS')
+
     return l_values, l_index
 
 
@@ -318,7 +837,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     ds = subset_dataset_to_max_full_years(ds)
     num_years = len(ds.groupby('time.year'))
     l_values.append(num_years)
-    l_index.append( ('Climate', 'num_years_era5 ', 'years', 'ERA5') )
+    l_index.append( ('Climate', 'num_years_era5', 'years', 'ERA5') )
     
     # --- Annual statistics (P, PET, T, aridity, seasonality, temperature, snow)
     # P
@@ -454,7 +973,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
     if (monthly_mtpr == 0).any():
         print(f'--- WARNING: attributes_from_era5(): adding 1 mm to monthly precipitation to avoid divide by zero error in aridity calculation')
-        monthly_mtpr[(monthly_mtpr == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+        monthly_mtpr[(monthly_mtpr == 0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
     monthly_ari = (monthly_mper / monthly_mtpr).groupby('time.month')
     ari_m = monthly_ari.mean()
     ari_s = monthly_ari.std()
@@ -466,7 +985,7 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     monthly_mtpr = ds['mtpr'].resample(time='1ME').mean()
     if (monthly_mtpr == 0).any():
         print(f'--- WARNING: attributes_from_era5(): adding 1 mm to monthly precipitation to avoid divide by zero error in snow calculation. Note that by definition this cannot change the fraction snow result (if there is 0 precip, none of it will fall as snow)')
-        monthly_mtpr[(monthly_mtpr == 0).sel(hru=0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
+        monthly_mtpr[(monthly_mtpr == 0)] = 1 / mm_per_m * water_density / (seconds_per_day * days_per_month.mean()) # [mm month-1] / [mm m-1] * [kg m-3] / ([s d-1] * [d month-1]) = [kg m-2 s-1]
     monthly_snow = (monthly_snow / monthly_mtpr).groupby('time.month')
     fsnow_m = monthly_snow.mean()
     fsnow_s = monthly_snow.std()
@@ -527,16 +1046,16 @@ def attributes_from_era5(met_folder, shp_path, dataset, l_values, l_index, use_m
     return l_values, l_index, ds_precip, ds
 
 
-def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index):
+def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index, case='lumped'):
 
     '''Calculates mean, min, max and stdv for forest height 2000 and 2020 tifs'''
 
     # Year 2000 min, mean, max, stdev
     tif = str( geo_folder / dataset / 'raw' / 'forest_height_2000.tif' )
     stats = ['mean', 'min', 'max', 'std']
-    zonal_out = zonal_stats(shp_str, tif, stats=stats)
+    zonal_out = zonal_stats(shp_str, tif, stats=stats, all_touched=True)
     scale,offset = read_scale_and_offset(tif)
-    l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+    l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
     index += [('Land cover', 'forest_height_2000_min',   'm', 'GLCLUC 2000-2020'),
               ('Land cover', 'forest_height_2000_mean',  'm', 'GLCLUC 2000-2020'),
               ('Land cover', 'forest_height_2000_max',   'm', 'GLCLUC 2000-2020'),
@@ -545,9 +1064,9 @@ def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index)
     # Year 2020 mean, stdev
     tif = geo_folder / dataset / 'raw' / 'forest_height_2020.tif'
     stats = ['mean', 'min', 'max', 'std']
-    zonal_out = zonal_stats(shp_str, tif, stats=stats)
+    zonal_out = zonal_stats(shp_str, tif, stats=stats, all_touched=True)
     scale,offset = read_scale_and_offset(tif)
-    l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+    l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
     index += [('Land cover', 'forest_height_2020_min',   'm', 'GLCLUC 2000-2020'),
               ('Land cover', 'forest_height_2020_mean',  'm', 'GLCLUC 2000-2020'),
               ('Land cover', 'forest_height_2020_max',   'm', 'GLCLUC 2000-2020'),
@@ -555,7 +1074,7 @@ def attributes_from_forest_height(geo_folder, dataset, shp_str, l_values, index)
 
     return l_values, index
 
-def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index):
+def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index, case='lumped'):
 
     '''Calculates mean and stdv for tifs of monthly LAI values'''
 
@@ -567,10 +1086,10 @@ def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index
     # Monthly mean, stdev LAI; monthly mean, stdev GVF
     for month_file in month_files:
         stats = ['mean', 'std']
-        zonal_out = zonal_stats(shp_str, month_file, stats=stats)
+        zonal_out = zonal_stats(shp_str, month_file, stats=stats, all_touched=True)
         scale, offset = read_scale_and_offset(month_file)
         scale,offset = read_scale_and_offset(month_file)
-        l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+        l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
         month = os.path.basename(month_file).split('_')[2]
         index += [('Land cover', f'lai_mean_month_{month}',  'm^2 m^-2', 'MCD15A2H.061'),
                   ('Land cover', f'lai_std_month_{month}',   'm^2 m^-2', 'MCD15A2H.061')]
@@ -584,7 +1103,7 @@ def attributes_from_lai(geo_folder, dataset, temp_path, shp_str, l_values, index
     
     return l_values, index
 
-def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, l_index):
+def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, l_index, case='lumped'):
 
     '''Calculates mean and stdv for tifs of monthly WorldClim values'''
 
@@ -603,24 +1122,65 @@ def attributes_from_worldclim(geo_folder, dataset, shp_str, l_values, l_index):
         for month_file in month_files:
             month_file = clim_folder / sub_folder / month_file # Construct the full path, because listdir() gives only files
             stats = ['mean', 'std']
-            zonal_out = zonal_stats(shp_str, month_file, stats=stats)
+            zonal_out = zonal_stats(shp_str, month_file, stats=stats, all_touched=True)
             
             scale, offset = read_scale_and_offset(month_file)
             if sub_folder == 'srad':
                 zonal_out = zonal_stats_unit_conversion(zonal_out,stats,'srad', scale, offset)
 
-            l_values = update_values_list(l_values, stats, zonal_out, scale, offset)
+            l_values = update_values_list(l_values, stats, zonal_out, scale, offset, case=case)
             
             month = os.path.basename(month_file).split('_')[3].split('.')[0]
             var = os.path.basename(month_file).split('_')[2]
             source = 'WorldClim'
-            if var == 'pet': source = 'WorldClim (derived, Oudin et al., 2005)'
+            if var == 'pet': 
+                source = 'WorldClim (derived, Oudin et al., 2005)'
+                var = 'pet2' # overwrite so we can distinguish this from pet1 (RDRS)
             l_index += [('Climate', f'{var}_mean_month_{month}', f'{sub_folder_unit}',  source),
                         ('Climate', f'{var}_std_month_{month}', f'{sub_folder_unit}', source)]
 
     return l_values, l_index
 
 ## ------- Component functions
+# Shapefile subsetting for distributed attributes
+def subset_glhymps_to_subbasin(glhymps, subbasin, ea_crs):
+    poly_glhymps = gpd.clip(glhymps,subbasin)
+    poly_glhymps['New_area_m2'] = poly_glhymps.to_crs(ea_crs).area
+    return poly_glhymps
+
+def subset_hydrolakes_to_subbasin(lakes, subbasin, ea_crs):
+
+    '''lakes: GeoDataframe | subbasin: geometry | ea_crs: string'''
+
+    # Clip the lakes polygon to the subbasin
+    poly_lakes = gpd.clip(lakes,subbasin)
+
+    # If we are left with any lake polygons:
+    if len(poly_lakes) > 0 :
+    # Update the Lake_area [km2] and Vol_total [million~m^3] values
+    # This is needed in cases where due to clipping the lake polygon we end up with a partial lake in this subbasin
+    
+        # Old values
+        old_areas = poly_lakes['Lake_area'] # km2
+        old_volumes = poly_lakes['Vol_total'] # million m3
+        
+        # Get new area
+        new_areas = poly_lakes.to_crs(ea_crs).area / 10**6 # [m2] / 10^6 = [km2]
+        new_areas_rounded = round(new_areas,2) # this matches the number of significant digits in the test case (CAN_01DJ005)
+        
+        # Scale volume by new area - this is a bit simplistic but we have no better way to estimate the volume
+        new_volumes = old_volumes * (new_areas_rounded / old_areas)
+        
+        # Replace values
+        poly_lakes['Lake_area'] = new_areas_rounded
+        poly_lakes['Vol_total'] = new_volumes
+
+    return poly_lakes
+
+# harmonic mean for conductivity averages
+def harmonic_mean(x):
+    return np.ma.count(x) / (1/x).sum()
+
 def check_zonal_stats_outcomes(zonal_out, new_val=np.nan):
     '''Checks for None value in zonal_out, and sets these to np.nan or user-defined value'''
     for ix in range(0,len(zonal_out)):
@@ -765,26 +1325,58 @@ def get_categorical_dict(source):
     
     return cat_dict
 
-def update_values_list_with_categorical(l_values, l_index, zonal_out, source, prefix=''):
+def update_values_list_with_categorical(l_values, l_index, zonal_out, source, prefix='', case='lumped'):
     '''Maps a zonal histogram of categorical classes onto descriptions and adds to lists'''
 
     # Get the category definitions
     cat_dict = get_categorical_dict(source)    
 
-    # Find the total number of classified pixels
-    total_pixels = 0
-    for land_id,count in zonal_out[0].items():
-        total_pixels += count
+    # Separately handle lumped and distributed cases
+    if case == 'lumped':
     
-    # Loop over all categories and see what we have in this catchment
-    for land_id,text in cat_dict.items():
-        land_prct = 0
-        if land_id in zonal_out[0].keys():
-            land_prct = zonal_out[0][land_id] / total_pixels
-        l_values.append(land_prct)
-        l_index.append(('Land cover', f'{prefix}{text}_fraction', '-', f'{source}'))
+        # Find the total number of classified pixels
+        total_pixels = 0
+        for land_id,count in zonal_out[0].items():
+            total_pixels += count
+        
+        # Loop over all categories and see what we have in this catchment
+        for land_id,text in cat_dict.items():
+            land_prct = 0
+            if land_id in zonal_out[0].keys():
+                land_prct = zonal_out[0][land_id] / total_pixels
+            l_values.append(land_prct)
+            l_index.append(('Land cover', f'{prefix}{text}_fraction', '-', f'{source}'))
+
+    # distributed case, multiple polygons
+    elif case == 'distributed': 
+
+        # confirm that l_values has as many nested lists as we have zonal stats outputs
+        num_nested_lists = sum(1 for item in l_values if isinstance(item, list))
+        assert num_nested_lists == len(zonal_out), f"zonal_out length does not match expected list length {num_nested_lists}. zonal_out: {zonal_out}"
+
+        # now loop over the zonal outputs and append to relevant lists
+        for i in range(0,num_nested_lists):
+
+            # Find the total number of classified pixels
+            total_pixels = 0
+            for land_id,count in zonal_out[i].items():
+                total_pixels += count
+            
+            # Loop over all categories and see what we have in this catchment
+            tmp_index = [] # we need this so the index resets on each subbasin iteration, and we need that because we only need the index once
+            for land_id,text in cat_dict.items():
+                land_prct = 0
+                if land_id in zonal_out[i].keys():
+                    land_prct = zonal_out[i][land_id] / total_pixels
+                l_values[i].append(land_prct)
+                tmp_index.append(('Land cover', f'{prefix}{text}_fraction', '-', f'{source}'))
+
+        # Add the index values only once
+        for item in tmp_index:
+            l_index.append(item)
 
     return l_values,l_index
+
 
 def zonal_stats_unit_conversion(zonal_out, stat_to_convert, variable, scale, offset):
     '''Takes a zonal_stats output and converts the units of any variable listed in stat_to_convert'''
@@ -820,24 +1412,59 @@ def zonal_stats_unit_conversion(zonal_out, stat_to_convert, variable, scale, off
 
     return zonal_out
 
-def update_values_list(l_values, stats, zonal_out, scale, offset):
+def update_values_list(l_values, stats, zonal_out, scale, offset, case='lumped'):
 
     # Update scale and offset to usable values
     if scale is None: scale = 1 # If scale is undefined that means we simply multiply by 1
     if offset is None: offset = 0 # Undefined offset > add 0
 
+    # Deal with the occassional None that we get when raster data input to zonal-stats is missing
+    # This fixes 9 occurrences of missing data in the soilgrids maps
+    zonal_out = zonal_out_none2nan(zonal_out)
+    
     # We loop through the calculated stats in a pre-determined order:
     # 1. min
-    # 2. mean
+    # 2. mean (harmonic mean: 'harmonic_mean', circular mean: 'circ_mean')
     # 3. max
-    # 4. stdev
+    # 4. stdev (circular stdev:  'circ_std'
     # 5. ..
-    if 'min' in stats:  l_values.append(zonal_out[0]['min']  * scale + offset)
-    if 'mean' in stats: l_values.append(zonal_out[0]['mean'] * scale + offset)
-    if 'max' in stats:  l_values.append(zonal_out[0]['max']  * scale + offset)
-    if 'std' in stats:  l_values.append(zonal_out[0]['std']  * scale + offset)
+    if case == 'lumped': # lumped case
+        if 'min' in stats:  l_values.append(zonal_out[0]['min']  * scale + offset)
+        if 'mean' in stats: l_values.append(zonal_out[0]['mean'] * scale + offset)
+        if 'harmonic_mean'  in stats: l_values.append(zonal_out[0]['harmonic_mean'] * scale + offset) # SOILGRIDS conductivity
+        if 'circ_mean'  in stats: l_values.append(zonal_out[0]['circ_mean'] * scale + offset) # MERIT Hydro aspect
+        if 'max' in stats:  l_values.append(zonal_out[0]['max']  * scale + offset)
+        if 'std' in stats:  l_values.append(zonal_out[0]['std']  * scale + offset)
+        if 'circ_std' in stats:  l_values.append(zonal_out[0]['circ_std']  * scale + offset)
+    
+    # distributed case, multiple polygons
+    elif case == 'distributed':
+        
+        # confirm that l_values has as many nested lists as we have zonal stats outputs
+        num_nested_lists = sum(1 for item in l_values if isinstance(item, list))
+        assert num_nested_lists == len(zonal_out), f"zonal_out length does not match expected list length {num_nested_lists}. zonal_out: {zonal_out}"
+        
+        # now loop over the zonal outputs and append to relevant lists
+        for i in range(0,num_nested_lists):
+            if 'min' in stats:  l_values[i].append(zonal_out[i]['min']  * scale + offset)
+            if 'mean' in stats: l_values[i].append(zonal_out[i]['mean'] * scale + offset)
+            if 'harmonic_mean'  in stats: l_values[i].append(zonal_out[i]['harmonic_mean'] * scale + offset) # only here for soilgrids conductivity, in which case we don't have 'mean'
+            if 'circ_mean'  in stats: l_values[i].append(zonal_out[i]['circ_mean'] * scale + offset) # MERIT Hydro aspect
+            if 'max' in stats:  l_values[i].append(zonal_out[i]['max']  * scale + offset)
+            if 'std' in stats:  l_values[i].append(zonal_out[i]['std']  * scale + offset)
+            if 'circ_std' in stats:  l_values[i].append(zonal_out[i]['circ_std']  * scale + offset)
 
     return l_values
+    
+
+def zonal_out_none2nan(zonal_out):
+    '''Loops over zonal_out list that contains dictionaries, and replaces any None with np.nan'''
+    for zonal_dict in zonal_out:
+        for key in zonal_dict:
+            if zonal_dict[key] is None:
+                zonal_dict[key] = np.nan
+                print(f'Replaced None in {key} with NaN')
+    return zonal_out  
 
 def read_scale_and_offset(geotiff_path):
     # Enforce data type
@@ -1084,7 +1711,20 @@ def calculate_flow_period_stats(var, condition, hilo, l_values, l_index,
 
 def calculate_signatures(hyd, pre, source, l_values, l_index):
     '''Calculates various signatures'''
-    
+
+    ## prep for signatures that require precip
+    # find the section of 'hyd' and 'pre' with the largest overlap
+    pre_s = pre['time'][0]
+    pre_e = pre['time'][-1]
+    hyd_s = hyd['time'][0]
+    hyd_e = hyd['time'][-1]
+    pre_ss = pre.sel(time=slice(max(pre_s,hyd_s), min(pre_e, hyd_e)))
+    hyd_ss = hyd.sel(time=slice(max(pre_s,hyd_s), min(pre_e, hyd_e))) # subset streamflow to precip record length
+    assert hyd_ss['time'][0].values == pre_ss['time'][0].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow start timestamp' # confirm time periods are the same
+    assert hyd_ss['time'][-1].values == pre_ss['time'][-1].values, 'attributes_from_streamflow(): mismatch between precipitation and streamflow final timestamp'
+    assert len(hyd_ss['time']) == len(pre_ss['time']), 'attributes_from_streamflow(): different number of timesteps in precipitation and streamflow series'
+    assert all(hyd_ss['water_year'] == pre_ss['water_year']) 
+
     ## LONG-TERM STATISTICS
     # Mean daily discharge
     daily_mean_q = hyd['q_obs'].groupby(hyd['water_year']).mean() # .mean() of daily values gives us [mm d-1]
@@ -1096,7 +1736,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'daily_discharge_std', 'mm d^-1', f'{source}') )
     
     # Mean monthly flows
-    monthly_q = hyd['q_obs'].resample(time='1ME').mean().groupby('time.month')
+    monthly_q = hyd['q_obs'].resample(time='1M').mean().groupby('time.month')
     monthly_m = monthly_q.mean()
     with warnings.catch_warnings():
         # This mutes a "RuntimeWarning: Degrees of freedom <= 0 for slice. 
@@ -1106,22 +1746,23 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
         monthly_s = monthly_q.std()
     l_values, l_index = process_monthly_means_to_lists(monthly_m, 'mean', l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
     l_values, l_index = process_monthly_means_to_lists(monthly_s, 'std',  l_values, l_index, 'daily_streamflow', 'mm day^-1', 'Hydrology', source)
-    
+
     # Runoff ratio
-    daily_mean_p = pre.groupby(hyd['water_year']).mean()
-    yearly_rr = daily_mean_q/daily_mean_p
+    daily_mean_p = pre_ss.groupby('water_year').mean()
+    daily_mean_q_ss = hyd_ss['q_obs'].groupby(hyd_ss['water_year']).mean()
+    yearly_rr = daily_mean_q_ss/daily_mean_p
     rr_m = yearly_rr.mean()
     rr_s = yearly_rr.std()
     l_values.append(float(rr_m.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, ERA5') )
+    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, RDRS') )
     l_values.append(float(rr_s.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, ERA5') )
+    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, RDRS') )
     
     # Streamflow elasticity
-    q_elas = np.nanmedian(((daily_mean_q - daily_mean_q.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q.mean()))
+    q_elas = np.nanmedian(((daily_mean_q_ss - daily_mean_q_ss.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q_ss.mean()))
     l_values.append(q_elas)
-    l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, ERA5') )
-    
+    l_index.append( ('Hydrology', 'streamflow_elasticity', '-', f'{source}, RDRS') )
+
     # Slope of FDC
     groups = hyd['q_obs'].groupby(hyd['water_year'])
     slopes = []
@@ -1137,7 +1778,8 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
             # Do the actual stuff
             flows.sort()
             flows = np.log(flows)
-            slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+            #slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66*len(flows) - .33*len(flows))
+            slope = (np.percentile(flows,66) - np.percentile(flows,33)) / (.66 - .33)
             slopes.append(slope)
     slopes = np.array(slopes)
     slope_m = np.nanmean(slopes)
@@ -1151,8 +1793,8 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     # Baseflow index
     nan_mask = np.isnan(hyd['q_obs'])
     q_filled = hyd['q_obs'].interpolate_na(dim='time', method='linear')
-    rec,_ = baseflow.separation(q_filled.values, method='Eckhardt') # Find baseflow with Eckhardt filter
-    tmp = xr.DataArray(rec['Eckhardt'], dims='time', coords={'time': hyd['time']}) # Prepare a new variable to put in 'hyd'
+    rec = baseflow.separation(q_filled.to_dataframe(), method='Eckhardt') # Find baseflow with Eckhardt filter
+    tmp = xr.DataArray(rec['Eckhardt']['q_obs'])
     tmp[nan_mask] = np.nan
     hyd['q_bas'] = tmp
     daily_mean_qbase = hyd['q_bas'].groupby(hyd['water_year']).mean()
@@ -1164,17 +1806,19 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_index.append( ('Hydrology', 'bfi_std', '-', f'{source}') )
     
     # Half-flow date
-    tmp_cum_flow = hyd['q_obs'].groupby(hyd['water_year']).cumsum() # Cumulative flow per water year
-    tmp_sum_flow = hyd['q_obs'].groupby(hyd['water_year']).sum() # Total flow per water year
-    tmp_frc_flow = tmp_cum_flow.groupby(hyd['water_year']) / tmp_sum_flow # Fractional flow per water year
-    groups = tmp_frc_flow.groupby(hyd['water_year'])
     dates = []
-    for year,group in groups:
-        if np.isnan(group).all(): # happens in a few basins with year-long+ periods of zero flow
+    for year, group in hyd['q_obs'].groupby(hyd['water_year']):
+        # Calculate the values for this year
+        tmp_cum_flow = group.cumsum() # Cumulative flow per water year
+        tmp_sum_flow = group.sum() # Total flow per water year
+        tmp_frc_flow = tmp_cum_flow / tmp_sum_flow # Fractional flow per water year   
+        # Deal with NaNs
+        if ((group.isnull()) | (group == 0)).all(): # happens in a few basins with year-long+ periods of zero flow, and isnull() accounts for missing values in such years
             dates.append(np.nan)
         else:
-            hdf = group[group > 0.5][0]['time'].values
+            hdf = group[tmp_frc_flow > 0.5][0]['time'].values
             dates.append(pd.Timestamp(hdf).dayofyear)
+    
     dates = np.array(dates)
     dates = dates[~np.isnan(dates)] # Remove NaNs so we can use the circ stats
     hdf_m = circmean(dates, high=366)
@@ -1182,7 +1826,7 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     l_values.append(hdf_m)
     l_index.append( ('Hydrology', 'hfd_mean', 'day of year', f'{source}') )
     l_values.append(hdf_s)
-    l_index.append( ('Hydrology', 'hfd_std', 'day of year', f'{source}') )
+    l_index.append( ('Hydrology', 'hfd_std', 'days', f'{source}') )
     
     # Quantiles
     groups = hyd['q_obs'].groupby(hyd['water_year'])
@@ -1194,24 +1838,24 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
         for quantile in [0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
             q_m = groups.quantile(quantile, skipna=True).mean()
             q_s = groups.quantile(quantile).std()
-        l_values.append(float(q_m.values))
-        l_index.append(('Hydrology', f'q{int(quantile*100)}_mean', 'mm day^-1', f'{source}'))
-        l_values.append(float(q_s.values))
-        l_index.append(('Hydrology', f'q{int(quantile*100)}_std', 'mm day^-1', f'{source}'))
+            l_values.append(float(q_m.values))
+            l_index.append(('Hydrology', f'q{int(quantile*100)}_mean', 'mm day^-1', f'{source}'))
+            l_values.append(float(q_s.values))
+            l_index.append(('Hydrology', f'q{int(quantile*100)}_std', 'mm day^-1', f'{source}'))
     
     # Durations
     variable  = 'q_obs'
     no_flow_threshold = 0 # mm d-1
     no_flow_condition = hyd[variable] <= no_flow_threshold
-    l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index  = calculate_flow_period_stats('flow',no_flow_condition,'no',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     low_flow_threshold = 0.2 * hyd['q_obs'].mean() # mm d-1
     low_flow_condition = hyd[variable] < low_flow_threshold
-    l_values,l_index   = calculate_flow_period_stats('flow',low_flow_condition,'low',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index   = calculate_flow_period_stats('flow',low_flow_condition,'low',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     high_flow_threshold = 9 * hyd['q_obs'].median() # mm d-1
     high_flow_condition = hyd[variable] > high_flow_threshold
-    l_values,l_index    = calculate_flow_period_stats('flow',high_flow_condition,'high',l_values,l_index,dataset='source',units='days',category='Hydrology')
+    l_values,l_index    = calculate_flow_period_stats('flow',high_flow_condition,'high',l_values,l_index,dataset=source,units='days',category='Hydrology')
     
     return l_values,l_index
 
@@ -1269,6 +1913,15 @@ def get_open_water_stats(gdf, att, mask, l_values, l_index):
     return l_values, l_index
 
 ## ---- MERIT
+# Circular stats for aspect
+# # need compressed() because scipy < 1.12.0 circmean/std don't work well with masked arrays. This flattens the array and keeps values only
+def calc_circmean(x):
+    return circmean(x.compressed(), high=360) 
+
+def calc_circstd(x):
+    return circstd(x.compressed(), high=360)
+
+# deprecated, keeping for posterity
 def get_aspect_attributes(tif,l_values,l_index):
     '''Calculates circular statistics for MERIT Hydro aspect'''
 
@@ -1293,73 +1946,180 @@ def get_aspect_attributes(tif,l_values,l_index):
     
     return l_values,l_index
 
-def get_river_attributes(riv_str, l_values, l_index, area):
+def get_river_attributes(riv_str, bas_str, l_values, l_index, area, equal_area_crs='ESRI:102008'):
     
     '''Calculates topographic attributes from a MERIT Hydro Basins river polygon'''
 
-    # Initialize zeros for cases where we have no shapefile or an empty one
-    stream_total = 0
-    min_length = 0
-    mean_length = 0
-    max_length = 0
-    std_length = 0
-    riv_order = 0
-    density = 0
-    elongation = 0
-    
-    # Check if the file exists (for headwaters we won't have a river polygon)
-    if os.path.exists(riv_str):
-        # Load shapefiles
-        river = gpd.read_file(riv_str)
-        river = river.set_index('COMID')
-        river = river[~river.index.duplicated(keep='first')] # Removes any duplicate river segments
+    # We need some special actions if we're dealing with the distributed case, so check that first
+    case = 'lumped'
+    if 'distributed' in bas_str:
+        case = 'distributed'
 
-        # Check if we actually have a river segment (empty shapefile is not the same as no shapefile)
-        if len(river) > 0:
-            # Raw data
-            stream_lengths = []
-            headwaters = river[river['maxup'] == 0] # identify reaches with no upstream
-            for COMID in headwaters.index:
-                stream_length = 0
-                while COMID in river.index:
-                    stream_length += river.loc[COMID]['lengthkm'] # Add the length of the current segment
-                    COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
-                stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
+    # Handle the cases
+    if case == 'lumped': 
+    
+        # Initialize NaN for cases where we have no shapefile or an empty one
+        stream_total = np.nan
+        min_length = np.nan
+        mean_length = np.nan
+        max_length = np.nan
+        std_length = np.nan
+        riv_order = np.nan
+        density = np.nan
+        elongation = np.nan
         
-            # Stats
-            stream_total = river['lengthkm'].sum()
-            stream_lengths = np.array(stream_lengths)
-            min_length = stream_lengths.min()
-            mean_length = stream_lengths.mean()
-            max_length = stream_lengths.max()
-            std_length = stream_lengths.std()
-            riv_order = river['order'].max()
-            density = stream_total/area
-            elongation = 2*np.sqrt(area/np.pi)/max_length
-
-    # Update lists
-    l_values.append(min_length)
-    l_index.append(('Topography', 'stream_length_min',  'km', 'MERIT Hydro Basins'))
-    l_values.append(mean_length)
-    l_index.append(('Topography', 'stream_length_mean',  'km', 'MERIT Hydro Basins'))
-    l_values.append(max_length)
-    l_index.append(('Topography', 'stream_length_max',  'km', 'MERIT Hydro Basins'))
-    l_values.append(std_length)
-    l_index.append(('Topography', 'stream_length_std',  'km', 'MERIT Hydro Basins'))
-    l_values.append(stream_total)
-    l_index.append(('Topography', 'stream_length_total',  'km', 'MERIT Hydro Basins'))
+        # Check if the file exists (for headwaters we won't have a river polygon)
+        if os.path.exists(riv_str):
+            
+            # Load shapefiles
+            river = gpd.read_file(riv_str)
+            river = river.set_index('COMID')
+            river = river[~river.index.duplicated(keep='first')] # Removes any duplicate river segments
     
-    # Order
-    l_values.append(riv_order)
-    l_index.append(('Topography', 'steam_order_max',  '-', 'MERIT Hydro Basins'))
-
-    # Derived
-    l_values.append(density)
-    l_index.append(('Topography', 'stream_density',  'km^-1', 'Derived'))
-    l_values.append(elongation)
-    l_index.append(('Topography', 'elongation_ratio','-', 'Derived'))
+            # Check if we actually have a river segment (empty shapefile is not the same as no shapefile)
+            if len(river) > 0:
+                # Raw data
+                stream_lengths = []
+                headwaters = river[(river['maxup'] == 0) | (river['maxup'].isna())] # identify reaches with no upstream
+                for COMID in headwaters.index:
+                    stream_length = 0
+                    while COMID in river.index:
+                        stream_length += river.loc[COMID]['new_len_km'] # Add the length of the current segment
+                        COMID = river.loc[COMID]['NextDownID'] # Get the downstream reach
+                    stream_lengths.append(stream_length) # If we get here we ran out of downstream IDs
+            
+                # Stats
+                stream_total = river['new_len_km'].sum()
+                stream_lengths = np.array(stream_lengths)
+                min_length = stream_lengths.min()
+                mean_length = stream_lengths.mean()
+                max_length = stream_lengths.max()
+                std_length = stream_lengths.std()
+                riv_order = river['order'].max()
+                density = stream_total/area
+                elongation = 2*np.sqrt(area/np.pi)/max_length
     
-    return l_values,l_index
+        # Update lists
+        l_values.append(min_length)
+        l_index.append(('Topography', 'stream_length_min',  'km', 'MERIT Hydro Basins'))
+        l_values.append(mean_length)
+        l_index.append(('Topography', 'stream_length_mean', 'km', 'MERIT Hydro Basins'))
+        l_values.append(max_length)
+        l_index.append(('Topography', 'stream_length_max',  'km', 'MERIT Hydro Basins'))
+        l_values.append(std_length)
+        l_index.append(('Topography', 'stream_length_std',  'km', 'MERIT Hydro Basins'))
+        l_values.append(stream_total)
+        l_index.append(('Topography', 'segment_length_total', 'km', 'MERIT Hydro Basins'))
+        
+        # Order
+        l_values.append(riv_order)
+        l_index.append(('Topography', 'stream_order_max',  '-', 'MERIT Hydro Basins'))
+    
+        # Derived
+        l_values.append(density)
+        l_index.append(('Topography', 'stream_density',  'km^-1', 'MERIT Hydro, MERIT Hydro Basins'))
+        l_values.append(elongation)
+        l_index.append(('Topography', 'elongation_ratio','-', 'MERIT Hydro, MERIT Hydro Basins'))
+
+        # Final empty output
+        merit_comids = None
+
+    # distributed case
+    elif case == 'distributed':
+
+        # Get the basin shape and figure out what we're dealing with
+        basin = gpd.read_file(bas_str)
+        num_poly = len(basin)
+        merit_comids = basin['COMID'].values
+
+        # Check if the file exists (for headwaters we won't have a river polygon)
+        if os.path.exists(riv_str):
+            
+            # Load shapefiles
+            river = gpd.read_file(riv_str)
+            river = river.set_index('COMID')
+            river = river[~river.index.duplicated(keep='first')] # Removes any duplicate river segments
+
+            # Loop over the basins and process
+            for i_poly in range(num_poly):
+
+                # Find the river segment, if any, and get values for the statistics
+                comid = basin.iloc[i_poly]['COMID']
+                if comid in river.index:
+                    riv_poly = river.loc[comid]
+                    stream_length = riv_poly['new_len_km']
+                    slope = riv_poly['slope']
+                    upstream_area = riv_poly['uparea']
+                    basin_area = basin.to_crs('ESRI:102008').area.iloc[0] / 10**6 # area in km2
+                    density = stream_length/basin_area
+                    elongation = 2*np.sqrt(basin_area/np.pi)/stream_length
+                else:
+                    stream_length = np.nan # no delineated river here, so no stats
+                    slope = np.nan
+                    upstream_area = np.nan
+                    density = np.nan
+                    elongation = np.nan
+                
+                # Append statistics to list
+                l_values[i_poly].append(stream_length)
+                l_values[i_poly].append(slope)
+                l_values[i_poly].append(upstream_area)
+                l_values[i_poly].append(density)
+                l_values[i_poly].append(elongation)
+                    
+        else: # no river shapefile
+            
+            # just add nans everywhere
+            stream_length = np.nan # no delineated river here, so no stats
+            slope = np.nan
+            upstream_area = np.nan
+            density = np.nan
+            elongation = np.nan
+    
+            for i_poly in range(num_poly):
+                l_values[i_poly].append(stream_length)
+                l_values[i_poly].append(slope)
+                l_values[i_poly].append(upstream_area)
+                l_values[i_poly].append(density)
+                l_values[i_poly].append(elongation)
+
+        # Update the index list
+        l_index += [('Topography', 'stream_length',    'km',     'MERIT Hydro Basins'),
+                    ('Topography', 'stream_slope',     'm m^-1', 'MERIT Hydro Basins'),
+                    ('Topography', 'upstream_area',    'km^2',   'MERIT Hydro Basins'),
+                    ('Topography', 'stream_density',   'km^-1',  'MERIT Hydro, MERIT Hydro Basins'),
+                    ('Topography', 'elongation_ratio', '-',      'MERIT Hydro, MERIT Hydro Basins')]
+    
+    return l_values,l_index,merit_comids
+
+## ---- RDRS
+def find_climate_seasonality_rdrs(ds, use_typical_cycle=False):
+
+    if not use_typical_cycle:
+        # Resample the observations to daily, retain individual years
+        daily_p_groups = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1D').mean().groupby('time.year')
+        daily_t_groups = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().groupby('time.year')
+
+        seasonalities = []
+        for zip_p, zip_t in zip(daily_p_groups,daily_t_groups):
+            year = zip_p[0]
+            yp = zip_p[1].values.flatten()
+            yt = zip_t[1].values.flatten()
+            seasonalities.append(fit_climate_sines(yt,yp))
+        return np.array(seasonalities)
+    
+    else:
+        # Resample to typical seasonal cycles at daily resolution
+        daily_p = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+        daily_t = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().groupby('time.dayofyear').mean()
+
+        # Time series of input and output
+        yp = daily_p.values.flatten()
+        yt = daily_t.values.flatten()
+
+        # Fit the sine curves and return the seasonality coefficient
+        return fit_climate_sines(yt,yp)
+
 
 
 ## ---- ERA5
@@ -1402,7 +2162,7 @@ def calculate_temp_prcp_stats(var, condition, hilo, l_values,l_index,
 
     # Calculate frequencies
     freq = condition.mean(dim='time') * days_per_year # [-] * [days year-1]
-    l_values.append(freq.values[0])
+    l_values.append(freq.values)
     l_index.append( ('Climate', f'{hilo}_{var}_freq', 'days year^-1', dataset) )
     
     # Calculate duration statistics
@@ -1563,7 +2323,7 @@ def calculate_monthly_lai_maps(lai_files, des_path):
     return des_files
 
 ## --- WorldClim
-def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
+def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset, overwrite=False):
     
     '''Calculates aridity and fraction snow maps from WorldClim data'''
 
@@ -1584,6 +2344,18 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
     # Loop over files and calculate aridity
     for prc_file, pet_file, tmp_file in zip(prc_files, pet_files, tmp_files):
 
+        # Define output file names
+        ari_name = prc_file.replace('prec','aridity2')
+        ari_file = str(ari_folder / ari_name)
+        fsnow_name = prc_file.replace('prec','fracsnow2')
+        fsnow_file = str(fsnow_folder / fsnow_name)
+        snow_name = prc_file.replace('prec','snow2')
+        snow_file = str(snow_folder / snow_name)
+
+        # Check if we proceed
+        if os.path.isfile(ari_file) and os.path.isfile(fsnow_file) and os.path.isfile(snow_file) and not overwrite:
+            return # step out early
+
         # Define month
         month = prc_file.split('_')[-1].split('.')[0] # 'wc2.1_30s_prec_01.tif' > '01', ..., '12'
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
@@ -1603,22 +2375,14 @@ def aridity_and_fraction_snow_from_worldclim(geo_folder, dataset):
         ari = pet/prc # [-]
         frac_snow = snow/prc # [-]
 
-        # Define output file name and write to disk
-        ari_name = prc_file.replace('prec','aridity2')
-        ari_file = str(ari_folder / ari_name)
+        # Write to disk
         write_geotif_sameDomain(prc_path, ari_file, ari)
-
-        fsnow_name = prc_file.replace('prec','fracsnow2')
-        fsnow_file = str(fsnow_folder / fsnow_name)
         write_geotif_sameDomain(prc_path, fsnow_file, frac_snow)
-
-        snow_name = prc_file.replace('prec','snow2')
-        snow_file = str(snow_folder / snow_name)
         write_geotif_sameDomain(prc_path, snow_file, snow)
     
     return
 
-def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
+def oudin_pet_from_worldclim(geo_folder, dataset, debug=False, overwrite=False):
 
     '''Calculates PET estimates from WorldClim data, using the Oudin (2005; 10.1016/j.jhydrol.2004.08.026) formulation'''
 
@@ -1640,6 +2404,14 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
     # Loop over files and calculate PET
     for srad_file, tavg_file in zip(srad_files, tavg_files):
 
+        # Define output file name
+        pet_name = srad_file.replace('srad','pet')
+        pet_file = str(pet_folder / pet_name)
+
+        # Check if we proceed
+        if os.path.isfile(pet_file) and not overwrite:
+            return # step out early
+
         # Define month
         month = srad_file.split('_')[-1].split('.')[0] # 'wc2.1_30s_srad_01.tif' > '01', ..., '12'
         month_ix = int(month)-1 # -1 to account for zero-based indexing: Jan value is at index 0, not 1
@@ -1655,9 +2427,7 @@ def oudin_pet_from_worldclim(geo_folder, dataset, debug=False):
         pet_month = pet * days_per_month[month_ix] # mm month-1
         if debug: print(f'Calculating monthly PET for month {month} at day-index {month_ix}')
 
-        # Define output file name and write to disk
-        pet_name = srad_file.replace('srad','pet')
-        pet_file = str(pet_folder / pet_name)
+        # Write to disk
         write_geotif_sameDomain(srad_path, pet_file, pet_month)
     return
 
@@ -1671,29 +2441,64 @@ def get_annual_worldclim_attributes(clim_folder, shp_str, prec_folder, tavg_fold
 
     # General settings
     stats = ['mean', 'std']
+
+    # We need some special actions if we're dealing with the distributed case, so check that first
+    case = 'lumped'
+    if 'distributed' in shp_str:
+        case = 'distributed'
+        num_nested_lists = len(l_values)
     
     # --- P
     prec_files = sorted( glob.glob(str(clim_folder / prec_folder / '*.tif')) )
     annual_prec = create_annual_worldclim_map(prec_files, ann_folder, 'prec_sum.tif', 'prec')
-    zonal_out = zonal_stats(shp_str, annual_prec, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_prec, stats=stats, all_touched=True)
+
+    # Handle scale and offset
+    scale,offset = read_scale_and_offset(annual_prec)
+    if scale is None: scale = 1 # If scale is undefined that means we simply multiply by 1
+    if offset is None: offset = 0 # Undefined offset > add 0
+
+    # Update lists
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
         l_index.append(('Climate',f'prec_{stat}','mm', 'WorldClim'))
 
     # --- PET
     pet_files = sorted( glob.glob(str(clim_folder / pet_folder / '*.tif')) )
     annual_pet = create_annual_worldclim_map(pet_files, ann_folder, 'pet_sum.tif', 'pet')
-    zonal_out = zonal_stats(shp_str, annual_pet, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_pet, stats=stats, all_touched=True)
+    
+    scale,offset = read_scale_and_offset(annual_pet)
+    if scale is None: scale = 1
+    if offset is None: offset = 0
+        
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
-        l_index.append(('Climate',f'pet_{stat}','mm', 'WorldClim'))
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
+        l_index.append(('Climate',f'pet2_{stat}','mm', 'WorldClim'))
         
     # --- T
     tavg_files = sorted( glob.glob(str(clim_folder / tavg_folder / '*.tif')) )
     annual_tavg = create_annual_worldclim_map(tavg_files, ann_folder, 't_avg.tif', 'tavg')
-    zonal_out = zonal_stats(shp_str, annual_tavg, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_tavg, stats=stats, all_touched=True)
+    
+    scale,offset = read_scale_and_offset(annual_tavg)
+    if scale is None: scale = 1
+    if offset is None: offset = 0
+        
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
         l_index.append(('Climate',f'tavg_{stat}','C', 'WorldClim'))
 
     # --- Snow
@@ -1702,23 +2507,50 @@ def get_annual_worldclim_attributes(clim_folder, shp_str, prec_folder, tavg_fold
 
     # --- Aridity
     annual_ari = derive_annual_worldclim_aridity(annual_prec, annual_pet, ann_folder, 'aridity.tif')
-    zonal_out = zonal_stats(shp_str, annual_ari, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_ari, stats=stats, all_touched=True)
+    
+    scale,offset = read_scale_and_offset(annual_ari)
+    if scale is None: scale = 1
+    if offset is None: offset = 0
+        
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
         l_index.append(('Climate',f'aridity2_{stat}','-', 'WorldClim'))
 
     # --- Seasonality
     annual_seas = derive_annual_worldclim_seasonality(prec_files, tavg_files, ann_folder, 'seasonality.tif')
-    zonal_out = zonal_stats(shp_str, annual_seas, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_seas, stats=stats, all_touched=True)
+    
+    scale,offset = read_scale_and_offset(annual_seas)
+    if scale is None: scale = 1
+    if offset is None: offset = 0
+        
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
         l_index.append(('Climate',f'seasonality2_{stat}','-', 'WorldClim'))
     
     # --- Snow fraction
     annual_fs = derive_annual_worldclim_fracsnow(annual_prec, annual_snow, ann_folder, 'fracsnow.tif')
-    zonal_out = zonal_stats(shp_str, annual_fs, stats=stats)
+    zonal_out = zonal_stats(shp_str, annual_fs, stats=stats, all_touched=True)
+    
+    scale,offset = read_scale_and_offset(annual_fs)
+    if scale is None: scale = 1
+    if offset is None: offset = 0
+        
     for stat in stats:
-        l_values.append(zonal_out[0][stat])
+        if case == 'lumped':
+            l_values.append(zonal_out[0][stat] * scale + offset)
+        elif case == 'distributed':
+            for i in range(0,num_nested_lists):
+                l_values[i].append(zonal_out[i][stat] * scale + offset)
         l_index.append(('Climate',f'fracsnow2_{stat}','-', 'WorldClim'))
     
     return l_values, l_index

@@ -801,8 +801,25 @@ def add_time_bnds(file, dataset=[], timezone=[]):
         assert 'hours' in f['time'].getncattr('units'), f'ERROR: time units in {file} not in hours'
 
         # Check that a source dataset is specified
-        assert (dataset.lower() == 'era5') | (dataset.lower() == 'em-earth'), \
+        assert (dataset.lower() == 'era5') | (dataset.lower() == 'em-earth') | (dataset.lower() == 'rdrs'), \
             f'add_time_bnds() contains no settings for dataset = {dataset}'
+        
+        # Find out if we have a history or History attribute -_-
+        hist_var = None
+        if hasattr(f, 'History'):
+            hist_var = 'History'
+        elif hasattr(f, 'history'):
+            hist_var = 'history'           
+
+        # Check that we haven't already added bounds to this
+        if 'time_bnds' in f.variables:
+            # Get the history if available
+            old_hist = getattr(f,hist_var)
+            if 'add_time_bnds()' in old_hist:
+                print(f'WARNING: time_bnds already exists in {file}, added as part of CS workflow. Skipping.')
+            else:
+                print(f'WARNING: time_bnds already exists in {file}, source unknown. Skipping.')
+            return
 
         # Connect variable 'time_bounds' to variable 'time' through time attribute 'bounds'
         f['time'].setncattr('bounds','time_bnds')
@@ -825,9 +842,12 @@ def add_time_bnds(file, dataset=[], timezone=[]):
             f['time_bnds'][:] = np.array([f['time'][:]-1, f['time'][:]]) # Period-ending timestamps: t(n) is valid over t(n-1) to t(n)
         if dataset.lower() == 'em-earth':
             f['time_bnds'][:] = np.array([f['time'][:], f['time'][:]+1]) # Period-starting timestamps: t(n) is valid over t(n) to t(n+1)
+        if dataset.lower() == 'rdrs':
+            f['time_bnds'][:] = np.array([f['time'][:]-1, f['time'][:]]) # Period-ending timestamps: t(n) is valid over t(n-1) to t(n)
 
         # Update the file history
         new_history = f' On {time.ctime(time.time())}: add_time_bnds().'
-        old_history = f.History
+        old_history = getattr(f,hist_var)
         hist = f'{old_history} {new_history}'
-        f.setncattr('History',hist)
+        f.setncattr(hist_var,hist)
+        

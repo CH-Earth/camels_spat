@@ -2,6 +2,7 @@
 
 import easymore
 import geopandas as gpd
+import math
 import matplotlib.pyplot as plt
 import netCDF4 as nc4
 import numpy as np
@@ -42,12 +43,31 @@ def add_crs_to_shapefile(file, crs='EPSG:4326'):
 
     return
 
-def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_folder):
+def distance_to_degrees(distance_km, latitude):
+
+    '''Converts a distance in kilometers to degrees latitude and longitude
+    Needed to convert RDRS 10km resolution to lat/lon values for EASYMORE v2,
+    in cases where the domain is a single grid cell big.'''
+
+    # There is some variation, but one degree of latitude is approximately 111 kilometers
+    lat_degrees = distance_km / 111
+
+    # One degree of longitude varies with latitude
+    lon_degrees = distance_km / (111 * math.cos(math.radians(latitude)))
+
+    return lat_degrees, lon_degrees
+
+def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_folder, in_files=None, version='1.0'):
 
     '''Creates an EASYMORE object for remapping, with variable names specific to ERA5 or EM-Earth dataset'''
 
     # Initialize an EASYMORE object
-    esmr = easymore.easymore()
+    if version == '1.0.0':
+        esmr = easymore.easymore()
+    elif version == '2.0.0':
+        esmr = easymore.Easymore()
+    else:
+        print(f"Code for EASYMORE version{version} not implemented.")
 
     # General settings
     esmr.author_name = 'CAMELS-spat workflow'
@@ -61,15 +81,20 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
     esmr.output_dir = str(out_folder) + '/' # Path() to string; ensure the trailing '/' EASYMORE wants
 
     # Shapefiles
-    esmr.source_shp = grid_shp
-    esmr.source_shp_lat = 'latitude'
-    esmr.source_shp_lon = 'longitude'
-    
+    if grid_shp is not None:
+        esmr.source_shp = grid_shp
+        esmr.source_shp_lat = 'latitude'
+        esmr.source_shp_lon = 'longitude'
+        
     esmr.target_shp = basin_shp
     if case == 'lumped': esmr.target_shp_ID  = 'FID' # name of the HRU ID field
     if case == 'dist': esmr.target_shp_ID  = 'COMID' # name of the HRU ID field
     #esmr.target_shp_lat = 'latitude'
     #esmr.target_shp_lon = 'longitude'
+
+    # Input netcdf files
+    if in_files is not None:
+        esmr.source_nc = in_files
 
     # Input netcdf
     esmr.var_lat   = 'latitude'  # name of the latitude dimensions
@@ -86,8 +111,31 @@ def get_easymore_settings(data, case, grid_shp, basin_shp, temp_folder, out_fold
     if data == 'ERA5':
         esmr.var_names = ['msdwlwrf', 'msnlwrf', 'msdwswrf', 'msnswrf', 'mtpr', 'sp',
                           'mper', 't', 'q', 'u', 'v', 'e', 'rh', 'w'] # variable names of forcing data - hardcoded because we prescribe them during ERA5 merging
-    if data == 'EM-Earth':
-        esmr.var_names = ['tmean', 'prcp'] 
+    if data == 'EM_Earth':
+        esmr.var_names = ['tmean', 'prcp']
+
+    if data == 'Daymet':
+        esmr.var_names = ['prcp', 'tmax', 'tmin', 'srad', 'vp', 'dayl', 'pet']
+        esmr.var_lon = 'lon'
+        esmr.var_lat = 'lat'
+    
+    if data == 'RDRS':
+        esmr.var_names = ['RDRS_v2.1_A_PR0_SFC', # precip
+                          'RDRS_v2.1_P_FB_SFC',  # downward shortwave
+                          'RDRS_v2.1_P_FI_SFC',  # downward longwave
+                          'RDRS_v2.1_P_GZ_SFC',  # geopotential
+                          'RDRS_v2.1_P_HR_1.5m', # relative humidity
+                          'RDRS_v2.1_P_HU_1.5m', # specific humidity
+                          'RDRS_v2.1_P_P0_SFC',  # surface pressure
+                          'RDRS_v2.1_P_TT_1.5m', # temperature
+                          'RDRS_v2.1_P_UUC_10m', # wind in X dir
+                          'RDRS_v2.1_P_UVC_10m', # wind modulus
+                          'RDRS_v2.1_P_VVC_10m', # wind in Y dir
+                          'e', # derived vapor pressure
+                          'pet' # derived potential evapotranspiration
+                          ]
+        esmr.var_lon = 'lon'
+        esmr.var_lat = 'lat'
 
     # EASYMORE uses a default name for the remap CSV file based on esmr.case_name:
     remap_csv = esmr.case_name + '_remapping.csv'
@@ -235,6 +283,14 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
     
     with xr.open_dataset(file) as ds:
 
+        # Drop any time_bnds and nbdnds variables if exist
+        if 'time_bnds()' in ds.History:
+            print('Detected a file that originated from a step later in this workflow. Dropping time_bnds and nbnds variables for the temporary padded file.')
+            if 'time_bnds' in ds.variables:
+                ds = ds.drop_vars('time_bnds')
+            if 'nbnds' in ds.dims:
+                ds = ds.drop_dims('nbnds')
+
         # Get existing latitude and longitude values, and define the extended coordinates
         old_lat = ds[lat_dim].values
         old_lon = ds[lon_dim].values
@@ -281,12 +337,12 @@ def add_empty_grid_cells_around_single_cell_netcdf(file,
         else:    
             return new_ds
 
-def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles):
+def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, esmr_version='1.0'):
 
     ''' Container for repeated tasks needed to run EASYMORE for ERA5 or EM-Earth inputs'''
 
     # Initiate EASYMORE object
-    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder)
+    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder, version=esmr_version)
 
     # Create the remap file
     run_easymore_to_make_remap_file([infiles[0]], [esmr])
@@ -301,12 +357,12 @@ def easymore_workflow(data, case, esmr_temp, grid_shp, basin_shp, out_folder, in
 
     return esmr # EASYMORE object, containing all info used during run
 
-def easymore_workflow_with_cell_padding(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, grid_spacing=0.25):
+def easymore_workflow_with_cell_padding(data, case, esmr_temp, grid_shp, basin_shp, out_folder, infiles, grid_spacing=0.25, esmr_version='1.0'):
 
     '''Container to add a step to easymore_workflow() where we apply padding to input netCDF file(s)'''
     
     # Initiate EASYMORE object
-    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder)
+    esmr, remap_file = get_easymore_settings(data, case, grid_shp, basin_shp, esmr_temp, out_folder, version=esmr_version)
 
     # Loop over the files and process
     for ix, file_nc in enumerate(infiles):

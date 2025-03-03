@@ -12,13 +12,14 @@
 
 
 # Main settings
-code_path | /Users/wmk934/code/camels_spat/   | string  # Root path of processing code
-data_path | /Users/wmk934/data/CAMELS_spat/   | string  # Root path of data location
-temp_path | /Users/wmk934/data/CAMELS_spat/camels-spat-data/temp | string  # Path to temporary data folder - good for intermediate storage
+code_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/   | string  # Root path of processing code
+data_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/         | string  # Root path of data location
+temp_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/temp/    | string  # Path to temporary data folder - good for intermediate storage
+backup_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/backups/     | string  # Path to backup folder
 
 # 1. Python setup
-venv_path | /Users/wmk934/data/CAMELS_spat/ | string  # Path where the Python virtual environment will be created
-venv_name | camels-spat-env                 | string  # Virtual environment name
+venv_path | /gpfs/mdiops/globalhome/wmk934/HPC/camels_spat/ | string  # Path where the Python virtual environment will be created
+venv_name | camels-spat-esmr2-env           | string  # Virtual environment name
 reqs_path | 1_Python_setup/                 | string  # Sub-folders in root that contain requirements
 reqs_file | 0_requirements.txt              | string  # Python environment requirements for `pip install -r reqs.txt`
 
@@ -65,7 +66,9 @@ hydat_start_t   | 1950-01-01               | string  # Start time for HYDAT data
 hydat_start_e   | 2023-01-02               | string  # End time for HYDAT data extraction
 
 # 7. Forcing data downloads
-# n/a
+rdrs_url        | http://hpfx.collab.science.gc.ca/~smsh001/rdrs/v2.1/netcdf/  | string  ## URL with high-level RDRS folders (listed per year)
+rdrs_vars       | RDRS_v2.1_A_PR0_SFC,RDRS_v2.1_P_TT_1.5m,RDRS_v2.1_P_FB_SFC,RDRS_v2.1_P_FI_SFC,RDRS_v2.1_P_HR_1.5m,RDRS_v2.1_P_HU_1.5m,RDRS_v2.1_P_P0_SFC,RDRS_v2.1_P_UUC_10m,RDRS_v2.1_P_VVC_10m,RDRS_v2.1_P_UVC_10m,RDRS_v2.1_P_GZ_SFC  | string  ## RDRS variables we want to retain after downloading
+daymet_vars     | dayl,prcp,srad,tmax,tmin,vp,pet  | string  # daymet variables we want
 
 # 8. Geospatial data downloads
 geospatial_area      | -179.5,-50,5,85                                                                          | string  # Download coordinates for North American domain [85/-179.5/5/-50]
@@ -104,5 +107,6 @@ climate_urls         | 0_config/worldclim_links.txt                             
 att_path   | attributes | string  # Folder with where attribute .csv should go; appended to 'data_path'
 
 # 10. Analysis
-image_path | /Users/wmk934/OneDrive - University of Calgary/Postdoc/Documents/papers/paper-Knoben-CAMELspat/img | string  # Path where images will be stored
+image_path | /gpfs/tp/gwf/gwf_cmt/wknoben/camels_spat/camels-spat-data/img | string  # Path where images will be stored
+final_path | /gpfs/mdiops/gwf/gwf_cmt/wknoben | string  # Path where final data set will be moved
 
