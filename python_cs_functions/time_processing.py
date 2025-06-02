@@ -253,7 +253,7 @@ def return_data_quality_flag_meaning(l,country):
                      'Provisional/Provisoire:10'    : 'Provisional, ice-affected',
                      'Provisional/Provisoire:20'    : 'Provisional, estimated',
                      'Provisional/Provisoire:30'    : 'Provisional, partial day (relevant only for daily means)',
-                     'Provisional/Provisoire:nan'   : 'Approved, no qualifier specified',
+                     'Provisional/Provisoire:nan'   : 'Provisional, no qualifier specified',
                      'Provisional/Provisoire:-1'    : 'Provisional, no special conditions',
                      'Provisional/Provisoire:50'    : 'Provisional, revised',
                      'Final/Finales:0'              : 'Approved, flag unknown (not described in WSC docs)',
@@ -264,6 +264,44 @@ def return_data_quality_flag_meaning(l,country):
                      'Final/Finales:30'             : 'Approved, partial day (relevant only for daily means)',
                      'Final/Finales:nan'            : 'Approved, no qualifier specified',
                      'Final/Finales:-1'             : 'Approved, no special conditions',
+                     
+                     # Instantaneous - data set updates (uses different phrases because why not)
+                     'nan:0'     : 'Unknown, flag unknown (not described in WSC docs)',
+                     'nan:40'    : 'Unknown, dry (water level below sensor)',
+                     'nan:10'    : 'Unknown, ice-affected',
+                     'nan:20'    : 'Unknown, estimated',
+                     'nan:30'    : 'Unknown, partial day (relevant only for daily means)',
+                     'nan:nan'   : 'Unknown, no qualifier specified',
+                     'nan:-1'    : 'Unknown, no special conditions',
+                     'nan:50'    : 'Unknown, revised',
+      
+                     'Preliminary:0'     : 'Provisional, flag unknown (not described in WSC docs)',
+                     'Preliminary:40'    : 'Provisional, dry (water level below sensor)',
+                     'Preliminary:10'    : 'Provisional, ice-affected',
+                     'Preliminary:20'    : 'Provisional, estimated',
+                     'Preliminary:30'    : 'Provisional, partial day (relevant only for daily means)',
+                     'Preliminary:nan'   : 'Provisional, no qualifier specified',
+                     'Preliminary:-1'    : 'Provisional, no special conditions',
+                     'Preliminary:50'    : 'Provisional, revised',
+    
+                     'Reviewed:0'              : 'Reviewed, flag unknown (not described in WSC docs)',
+                     'Reviewed:40'             : 'Reviewed, dry (water level below sensor)',
+                     'Reviewed:10'             : 'Reviewed, ice-affected',
+                     'Reviewed:50'             : 'Reviewed, but revised',
+                     'Reviewed:20'             : 'Reviewed, but estimated',
+                     'Reviewed:30'             : 'Reviewed, partial day (relevant only for daily means)',
+                     'Reviewed:nan'            : 'Reviewed, no qualifier specified',
+                     'Reviewed:-1'             : 'Reviewed, no special conditions',
+                     
+                     'Approved:0'              : 'Approved, flag unknown (not described in WSC docs)',
+                     'Approved:40'             : 'Approved, dry (water level below sensor)',
+                     'Approved:10'             : 'Approved, ice-affected',
+                     'Approved:50'             : 'Approved, but revised',
+                     'Approved:20'             : 'Approved, but estimated',
+                     'Approved:30'             : 'Approved, partial day (relevant only for daily means)',
+                     'Approved:nan'            : 'Approved, no qualifier specified',
+                     'Approved:-1'             : 'Approved, no special conditions',
+            
                      # Daily data quality flags
                      'A'                            : 'Partial day',
                      'B'                            : 'Ice Conditions',
@@ -318,6 +356,7 @@ def select_minimal_wsc_data_quality_flag(flags):
     
     # https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/Document/WebService_Guidelines.pdf
     # https://wateroffice.ec.gc.ca/contactus/faq_e.html#Q15
+    # https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/UnitValueData/UnitValueData_Disclaimer.pdf
     
     # quality order
     standards = ['Provisional/Provisoire:0',     # Provisional, flag unknown (not described in WSC docs)
@@ -335,7 +374,44 @@ def select_minimal_wsc_data_quality_flag(flags):
                  'Final/Finales:20',             # Approved, but estimated
                  'Final/Finales:30',             # Approved, partial day (relevant only for daily means)
                  'Final/Finales:nan',            # Approved, no qualifier specified
-                 'Final/Finales:-1'              # Approved, no special conditions
+                 'Final/Finales:-1',             # Approved, no special conditions
+
+                 # Added for updates, because these files use different terms than before
+                 'nan:0',              # Undefined, flag unknown (not described in WSC docs)
+                 'nan:10',             # Undefined, ice-affected
+                 'nan:20',             # Undefined, but estimated
+                 'nan:30',             # Undefined, partial day (relevant only for daily means)
+                 'nan:40',             # Undefined, dry (water level below sensor)
+                 'nan:50',             # Undefined, but revised
+                 'nan:nan',            # Undefined, no qualifier specified
+                 'nan:-1',             # Undefined, no special conditions
+             
+                 'Preliminary:0',           # Provisional, flag unknown (not described in WSC docs)
+                 'Preliminary:40',          # Provisional, dry (water level below sensor)
+                 'Preliminary:10',          # Provisional, ice-affected
+                 'Preliminary:20',          # Provisional, estimated
+                 'Preliminary:30',          # Provisional, partial day (relevant only for daily means)
+                 'Preliminary:nan',         # Approved, no qualifier specified
+                 'Preliminary:-1',          # Provisional, no special conditions
+                 'Preliminary:50',          # Provisional, revised
+
+                 'Reviewed:0',              # Reviewed, flag unknown (not described in WSC docs)
+                 'Reviewed:10',             # Reviewed, ice-affected
+                 'Reviewed:20',             # Reviewed, but estimated
+                 'Reviewed:30',             # Reviewed, partial day (relevant only for daily means)
+                 'Reviewed:40',             # Reviewed, dry (water level below sensor)
+                 'Reviewed:50',             # Reviewed, but revised
+                 'Reviewed:nan',            # Reviewed, no qualifier specified
+                 'Reviewed:-1',             # Reviewed, no special conditions
+                 
+                 'Approved:0',              # Approved, flag unknown (not described in WSC docs)
+                 'Approved:40',             # Approved, dry (water level below sensor)
+                 'Approved:10',             # Approved, ice-affected
+                 'Approved:50',             # Approved, but revised
+                 'Approved:20',             # Approved, but estimated
+                 'Approved:30',             # Approved, partial day (relevant only for daily means)
+                 'Approved:nan',            # Approved, no qualifier specified
+                 'Approved:-1'              # Approved, no special conditions
                  ]
     
     if len(flags) > 0:
