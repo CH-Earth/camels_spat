@@ -593,16 +593,16 @@ def calculate_rdrs_stats_from_ds(ds,l_values,l_index):
     # P
     yearly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
     l_values.append(yearly_pr0.mean().values)
-    l_index.append(('Climate', 'PR0_mean', 'mm', 'RDRS'))
+    l_index.append(('Climate', 'PR0_mean', 'mm year-1', 'RDRS'))
     l_values.append(yearly_pr0.std().values)
-    l_index.append(('Climate', 'PR0_std', 'mm', 'RDRS'))
+    l_index.append(('Climate', 'PR0_std', 'mm year-1', 'RDRS'))
 
     # PET
     yearly_pet = ds['pet'].resample(time='1Y').mean() * seconds_per_day * days_per_year * mm_per_m / water_density # kg m-2 s-1 > mm yr-1
     l_values.append(yearly_pet.mean().values)
-    l_index.append(('Climate', 'pet1_mean', 'mm', 'RDRS'))
+    l_index.append(('Climate', 'pet1_mean', 'mm year-1', 'RDRS'))
     l_values.append(yearly_pet.std().values)
-    l_index.append(('Climate', 'pet1_std', 'mm', 'RDRS'))
+    l_index.append(('Climate', 'pet1_std', 'mm year-1', 'RDRS'))
 
     # T
     yearly_tt = ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1Y').mean() + kelvin_to_celsius # K > C
@@ -641,15 +641,15 @@ def calculate_rdrs_stats_from_ds(ds,l_values,l_index):
     monthly_pet = ds['pet'].resample(time='1M').mean().groupby('time.month')
     pet_m = monthly_pet.mean() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
     pet_s = monthly_pet.std() / water_density * seconds_per_day * days_per_month * mm_per_m  # [kg m-2 s-1] to [mm month-1]; negative to indicate upward flux
-    l_values, l_index = process_monthly_means_to_lists(pet_m, 'mean', l_values, l_index, 'pet1', 'mm', source='RDRS')
-    l_values, l_index = process_monthly_means_to_lists(pet_s, 'std', l_values, l_index, 'pet1', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pet_m, 'mean', l_values, l_index, 'pet1', 'mm month-1', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pet_s, 'std', l_values, l_index, 'pet1', 'mm month-1', source='RDRS')
 
     # Same for precipitation: [mm month-1]
     monthly_pr0 = ds['RDRS_v2.1_A_PR0_SFC'].resample(time='1M').mean().groupby('time.month')
     pr0_m = monthly_pr0.mean() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
     pr0_s = monthly_pr0.std() / water_density * seconds_per_day * days_per_month * mm_per_m # [kg m-2 s-1] to [mm month-1]
-    l_values, l_index = process_monthly_means_to_lists(pr0_m, 'mean', l_values, l_index, 'PR0', 'mm', source='RDRS')
-    l_values, l_index = process_monthly_means_to_lists(pr0_s, 'std', l_values, l_index, 'PR0', 'mm', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pr0_m, 'mean', l_values, l_index, 'PR0', 'mm month-1', source='RDRS')
+    l_values, l_index = process_monthly_means_to_lists(pr0_s, 'std', l_values, l_index, 'PR0', 'mm month-1', source='RDRS')
 
     # Monthly temperature statistics [C]
     monthly_tavg = (ds['RDRS_v2.1_P_TT_1.5m'].resample(time='1D').mean().resample(time='1M').mean() + kelvin_to_celsius).groupby('time.month')
@@ -1754,9 +1754,9 @@ def calculate_signatures(hyd, pre, source, l_values, l_index):
     rr_m = yearly_rr.mean()
     rr_s = yearly_rr.std()
     l_values.append(float(rr_m.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_mean', 'mm d^-1 month-1', f'{source}, RDRS') )
+    l_index.append( ('Hydrology', 'runoff_ratio_mean', '-', f'{source}, RDRS') )
     l_values.append(float(rr_s.values))
-    l_index.append( ('Hydrology', 'runoff_ratio_std', 'mm d^-1 month-1', f'{source}, RDRS') )
+    l_index.append( ('Hydrology', 'runoff_ratio_std', '-', f'{source}, RDRS') )
     
     # Streamflow elasticity
     q_elas = np.nanmedian(((daily_mean_q_ss - daily_mean_q_ss.mean())/(daily_mean_p - daily_mean_p.mean()))*(daily_mean_p.mean()/daily_mean_q_ss.mean()))
