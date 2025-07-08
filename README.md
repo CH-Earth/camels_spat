@@ -1,6 +1,14 @@
 # CAMELS-spat
 Repository that contains processing code used to generate the CAMELS-spat (Catchment Attributes and MEteorology for Large-Sample studies - SPATially distributed) data set.
 
+## Known issues
+If you are looking to use the CAMELS-SPAT data and want to know about potential pitfalls, please see the list of currently known issues here: https://github.com/CH-Earth/camels_spat/issues/42
+
+If you are here to report a potential issue please create a new, separate post here: https://github.com/CH-Earth/camels_spat/issues
+
+If you are here to ask a question about data set usage, please go to the Q&A section: https://github.com/CH-Earth/camels_spat/discussions/categories/q-a
+
+
 ## Repository description
 
 This repository contains the following sub-folders:
@@ -10,10 +18,9 @@ This repository contains the following sub-folders:
 - **3_merit_hydro** - contains code to obtain MERIT Hydro flow accumulation and flow direction grids, and MERIT Hydro-derived shapefiles.
 - **4_data_structure_prep** - contains code to generate a meta data file and prepare the necessary folder structures (makes folders and copies reference shapes if available).
 - **5_basin_delineation** - contains code to subset downloaded MERIT Hydro-derived shapefiles to the basins of interest, and ensure that the shapefile extent aligns with the USGS and RHBN gauge locations.
-
-	
-## Reproducibility
-
-To reproduce the data processing steps, execute scripts in order, starting at folder `1_Python_setup`, before moving on to main folder `2_`, main folder `3_`, etc. Folder names starting `0_` do not contain anything that needs to be executed manually. 
-
-Further instructions and descriptions are found in the Readme's contain in sub-folders.
+- **6_flow_data** - contains code to obtain and process flow data from United States Geological Survey (USGS) and Water Survey of Canada (WSC) at daily and sub-daily time resolutions.
+- **7_forcing_data** - contains code to obtain and process four forcing data sets: ERA5, EM-Earth, RDRS, and Daymet.
+- **8_geospatial_data** - contains code to obtain and process 12 geospatial data sets, covering: climate (WorldClim), topography (MERIT Hydro), land cover (GLCLU2019 land cover and forest height, MODIS land cover and LAI, LGRIP30) surface water (HydroLAKES), soil (Pelletier, SOILGRIDS), geology (GLHYMPS).
+- **9_attributes** - contains code to calculate basin attributes from the streamflow, forcing and geospatial data, at lumped and sub-basin resolutions.
+- **10_analysis** - contains code for paper plots and various checks.
+- **11_updates** - contains code for data set updates after initial publication.
