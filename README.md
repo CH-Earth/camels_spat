@@ -1,7 +1,7 @@
 # CAMELS-spat
 Repository that contains processing code used to generate the CAMELS-spat (Catchment Attributes and MEteorology for Large-Sample studies - SPATially distributed) data set.
 
-## Known issues
+## Issues and questions
 If you are looking to use the CAMELS-SPAT data and want to know about potential pitfalls, please see the list of currently known issues here: https://github.com/CH-Earth/camels_spat/issues/42
 
 If you are here to report a potential issue please create a new, separate post here: https://github.com/CH-Earth/camels_spat/issues
