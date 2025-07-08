@@ -1,6 +1,10 @@
 # CAMELS-spat
 Repository that contains processing code used to generate the CAMELS-spat (Catchment Attributes and MEteorology for Large-Sample studies - SPATially distributed) data set.
 
+For a description of the data set, processing steps and other hopefully helpful information, see here: https://egusphere.copernicus.org/preprints/2025/egusphere-2025-893/
+
+To access the data, see here (and check the README on the data repository for download help, particularly about the sizes of various data set components and how to include/exclude these from downloads): https://dx.doi.org/10.20383/103.01216
+
 ## Issues and questions
 If you are looking to use the CAMELS-SPAT data and want to know about potential pitfalls, please see the list of currently known issues here: https://github.com/CH-Earth/camels_spat/issues/42
 
